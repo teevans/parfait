@@ -108,6 +108,7 @@ QVariantList MeetingListModel::segmentsFor(qint64 id) const {
     for (const TranscriptSegment& s : segs) {
         QVariantMap m;
         m.insert(QStringLiteral("stream"), s.stream);
+        m.insert(QStringLiteral("speaker"), s.speaker);
         m.insert(QStringLiteral("t0"), s.t0);
         m.insert(QStringLiteral("t1"), s.t1);
         m.insert(QStringLiteral("text"), s.text);

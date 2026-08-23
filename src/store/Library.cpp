@@ -30,6 +30,10 @@ namespace {
 
 // Library.h is a frozen interface with no private data, so per-instance state
 // lives in this side table keyed by the object pointer.
+// Bumped whenever the on-disk schema changes; see the migration ladder in open().
+// v1: initial schema.  v2: segments.speaker (diarization turn index, -1 = unknown).
+constexpr int kSchemaVersion = 2;
+
 enum class FtsMode {
     None,           // no FTS5 in this SQLite build -> LIKE fallback
     Contentless,    // fts5(..., content='', contentless_delete=1)  [SQLite >= 3.43]
@@ -202,7 +206,8 @@ bool Library::open() {
         " stream INTEGER,"
         " t0 REAL,"
         " t1 REAL,"
-        " text TEXT)",
+        " text TEXT,"
+        " speaker INTEGER DEFAULT -1)",
         "CREATE INDEX IF NOT EXISTS idx_segments_meeting ON segments(meeting_id, t0)",
         "CREATE INDEX IF NOT EXISTS idx_meetings_started ON meetings(started_at DESC)",
     };
@@ -215,10 +220,40 @@ bool Library::open() {
             return false;
         }
     }
-    if (q.exec("SELECT version FROM schema_version") && !q.next()) {
+    // Version ladder. A fresh DB was just created at kSchemaVersion by the schema
+    // above, so it only needs the version row; older DBs are migrated step by step.
+    int version = 0;
+    bool haveVersion = false;
+    if (q.exec("SELECT version FROM schema_version") && q.next()) {
+        version = q.value(0).toInt();
+        haveVersion = true;
+    }
+    const int oldVersion = version;
+    if (!haveVersion) {
         QSqlQuery ins(db);
-        ins.prepare("INSERT INTO schema_version(version) VALUES(1)");
+        ins.prepare("INSERT INTO schema_version(version) VALUES(?)");
+        ins.addBindValue(kSchemaVersion);
         ins.exec();
+        version = kSchemaVersion;
+    }
+    if (version < 2) {
+        // v1 -> v2: diarization turn index on segments; existing rows read back -1.
+        QSqlQuery mig(db);
+        if (!mig.exec("ALTER TABLE segments ADD COLUMN speaker INTEGER DEFAULT -1")) {
+            const QString msg = QString("Schema migration to v2 failed: %1")
+                                    .arg(mig.lastError().text());
+            qWarning("gromarch: %s", qPrintable(msg));
+            emit error(msg);
+            db.close();
+            return false;
+        }
+        version = 2;
+    }
+    if (haveVersion && version != oldVersion) {
+        QSqlQuery upd(db);
+        upd.prepare("UPDATE schema_version SET version=?");
+        upd.addBindValue(version);
+        upd.exec();
     }
 
     // FTS5 is optional in some distro SQLite builds; degrade instead of failing.
@@ -409,12 +444,14 @@ void Library::appendSegment(const TranscriptSegment& seg) {
     }
     QSqlDatabase db = QSqlDatabase::database(s->connName, false);
     QSqlQuery q(db);
-    q.prepare("INSERT INTO segments (meeting_id, stream, t0, t1, text) VALUES (?,?,?,?,?)");
+    q.prepare("INSERT INTO segments (meeting_id, stream, t0, t1, text, speaker)"
+              " VALUES (?,?,?,?,?,?)");
     q.addBindValue(seg.meetingId);
     q.addBindValue(seg.stream);
     q.addBindValue(seg.t0);
     q.addBindValue(seg.t1);
     q.addBindValue(seg.text);
+    q.addBindValue(seg.speaker);
     if (!q.exec()) {
         const QString msg = QString("appendSegment failed: %1").arg(q.lastError().text());
         qWarning("gromarch: %s", qPrintable(msg));
@@ -430,7 +467,7 @@ QList<TranscriptSegment> Library::segments(qint64 meetingId) const {
     if (!s || !s->opened) return out;
     QSqlDatabase db = QSqlDatabase::database(s->connName, false);
     QSqlQuery q(db);
-    q.prepare("SELECT meeting_id, stream, t0, t1, text FROM segments"
+    q.prepare("SELECT meeting_id, stream, t0, t1, text, speaker FROM segments"
               " WHERE meeting_id=? ORDER BY t0 ASC, id ASC");
     q.addBindValue(meetingId);
     if (!q.exec()) {
@@ -445,6 +482,8 @@ QList<TranscriptSegment> Library::segments(qint64 meetingId) const {
         seg.t0 = q.value(2).toDouble();
         seg.t1 = q.value(3).toDouble();
         seg.text = q.value(4).toString();
+        // NULL (rows written before v2) reads back as -1 = unknown speaker.
+        seg.speaker = q.value(5).isNull() ? -1 : q.value(5).toInt();
         seg.final = true;
         out.append(seg);
     }
@@ -457,7 +496,18 @@ QString Library::transcriptText(qint64 meetingId) const {
     for (const TranscriptSegment& s : segs) {
         const QString text = s.text.trimmed();
         if (text.isEmpty()) continue;
-        lines << QString("%1: %2").arg(s.stream == int(Stream::Mic) ? "Me" : "Them", text);
+        // "Me:" for the mic; "Them:" for the system stream, or "Them#<n>:" when the
+        // diarizer gave the turn a speaker index — the enhance prompt uses this to
+        // attribute lines to distinct voices. <n> is the 1-based display index, so
+        // it matches the "Them 1"/"Them 2" labels shown in the transcript pane.
+        QString who;
+        if (s.stream == int(Stream::Mic))
+            who = QStringLiteral("Me");
+        else if (s.speaker >= 0)
+            who = QString("Them#%1").arg(s.speaker + 1);
+        else
+            who = QStringLiteral("Them");
+        lines << QString("%1: %2").arg(who, text);
     }
     return lines.join('\n');
 }

@@ -11,6 +11,7 @@
 #include <QCommandLineParser>
 #include <QCoreApplication>
 #include <QFile>
+#include <QSet>
 #include <QString>
 #include <QStringList>
 #include <QTextStream>
@@ -33,9 +34,13 @@ QString speakerOf(int stream) {
     return stream == int(Stream::System) ? QStringLiteral("Them") : QStringLiteral("Me");
 }
 
+// "Them#0 [1.0-2.5]: ..." when the segment carries a diarized turn index,
+// plain "Them [...]" / "Me [...]" when it does not.
 QString formatSegment(const TranscriptSegment& seg) {
+    QString who = speakerOf(seg.stream);
+    if (seg.speaker >= 0) who += QStringLiteral("#") + QString::number(seg.speaker);
     return QStringLiteral("%1 [%2-%3]: %4")
-        .arg(speakerOf(seg.stream))
+        .arg(who)
         .arg(seg.t0, 0, 'f', 1)
         .arg(seg.t1, 0, 'f', 1)
         .arg(seg.text);
@@ -110,13 +115,20 @@ int main(int argc, char* argv[]) {
         QStringList lines;
         int me = 0;
         int them = 0;
+        QSet<int> speakers;      // distinct turn indices seen on the System stream
         for (const TranscriptSegment& seg : finals) {
             lines << formatSegment(seg);
-            if (seg.stream == int(Stream::System)) ++them; else ++me;
+            if (seg.stream == int(Stream::System)) {
+                ++them;
+                if (seg.speaker >= 0) speakers.insert(seg.speaker);
+            } else {
+                ++me;
+            }
         }
         for (const QString& line : lines) out << line << "\n";
         out.flush();
-        err << "segments=" << finals.size() << " me=" << me << " them=" << them << "\n" << Qt::flush;
+        err << "segments=" << finals.size() << " me=" << me << " them=" << them
+            << " speakers=" << speakers.size() << "\n" << Qt::flush;
 
         if (!outPath.isEmpty()) {
             QFile file(outPath);

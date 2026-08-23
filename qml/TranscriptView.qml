@@ -14,9 +14,24 @@ Item {
         follow = true;
     }
 
+    // Palette for "Them" turns, indexed by speaker % 4. "Me" keeps Theme.accent,
+    // which is deliberately left out here so the two never collide.
+    function speakerColor(speaker) {
+        var palette = [Theme.blue, Theme.red, Theme.muted, Theme.selection];
+        return palette[speaker % palette.length];
+    }
+
+    // "Me" / "Them" / "Them 1", "Them 2", ... (display index = speaker + 1).
+    function speakerLabel(stream, speaker) {
+        if (stream === 0)
+            return "Me";
+        return speaker >= 0 ? "Them " + (speaker + 1) : "Them";
+    }
+
     function rowFor(seg) {
         return {
             "stream": seg.stream,
+            "speaker": seg.speaker === undefined ? -1 : seg.speaker,
             "t0": seg.t0,
             "t1": seg.t1,
             "text": seg.text,
@@ -25,6 +40,8 @@ Item {
     }
 
     function addSegment(seg) {
+        // Partials are keyed by stream only — a speaker change mid-stream must still
+        // land in the same trailing row, otherwise the partial would be duplicated.
         var key = String(seg.stream);
         var idx = partialRow[key] === undefined ? -1 : partialRow[key];
         var row = rowFor(seg);
@@ -49,6 +66,7 @@ Item {
         for (var i = 0; i < list.length; ++i) {
             segments.append({
                 "stream": list[i].stream,
+                "speaker": list[i].speaker === undefined ? -1 : list[i].speaker,
                 "t0": list[i].t0,
                 "t1": list[i].t1,
                 "text": list[i].text,
@@ -97,8 +115,13 @@ Item {
             Row {
                 spacing: 8
                 Label {
-                    text: segDelegate.model.stream === 0 ? "Me" : "Them"
-                    color: segDelegate.model.stream === 0 ? Theme.accent : Theme.muted
+                    text: transcript.speakerLabel(segDelegate.model.stream,
+                                                  segDelegate.model.speaker)
+                    color: segDelegate.model.stream === 0
+                           ? Theme.accent
+                           : (segDelegate.model.speaker >= 0
+                              ? transcript.speakerColor(segDelegate.model.speaker)
+                              : Theme.muted)
                     font.family: Theme.monoFont
                     font.pixelSize: 11
                     Behavior on color { ColorAnimation { duration: 200 } }

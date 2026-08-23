@@ -72,6 +72,24 @@ struct StreamState {
     }
 };
 
+// One decoded whisper segment inside a window: times are relative to the window.
+struct DecodedSeg {
+    double t0 = 0.0;
+    double t1 = 0.0;
+    QString text;
+    bool turnNext = false;   // tinydiarize: a speaker turn follows this segment
+};
+
+// tinydiarize is a property of the weights, not a runtime switch: only the
+// *-tdrz models emit the [SPEAKER_TURN] token, and turning tdrz_enable on for a
+// plain model makes whisper hunt for a token it was never trained to produce,
+// which degrades the transcript. whisper.cpp itself has no "does this model
+// support tdrz" query, so we go by the filename convention used by the upstream
+// download scripts (ggml-small.en-tdrz.bin).
+bool modelSupportsTdrz(const QString& path) {
+    return QFileInfo(path).fileName().contains(QStringLiteral("tdrz"), Qt::CaseInsensitive);
+}
+
 QString defaultModelPath() {
     const QString base = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
     return QDir(base).filePath(QStringLiteral("gromarch/models/ggml-base.en.bin"));
@@ -118,6 +136,10 @@ struct Impl {
     std::thread worker;
 
     StreamState streams[2];
+
+    // Speaker-turn counter for the System stream; monotonic across the meeting.
+    std::atomic<bool> tdrz{false};       // loaded model supports tinydiarize
+    int systemTurn = 0;                  // worker thread only
 
 #ifdef GROMARCH_WITH_WHISPER
     std::mutex ctxMutex;
@@ -197,11 +219,13 @@ struct Impl {
         }
 
         const bool ok = fresh != nullptr;
+        tdrz.store(ok && modelSupportsTdrz(want));
         available.store(ok);
         if (emitAvailability) emitAvailability(ok);
         if (!ok && emitError) emitError(failure);
         return ok;
 #else
+        tdrz.store(false);
         if (available.exchange(false) && emitAvailability) emitAvailability(false);
         return false;
 #endif
@@ -216,6 +240,7 @@ struct Impl {
     }
 
     void freeModel() {
+        tdrz.store(false);
 #ifdef GROMARCH_WITH_WHISPER
         std::lock_guard<std::mutex> lock(ctxMutex);
         if (ctx) whisper_free(ctx);
@@ -227,10 +252,13 @@ struct Impl {
 
     // ---- decoding ----------------------------------------------------------
 
-    QString decode(const std::vector<float>& pcm) {
+    // Decode a window into its whisper segments. Returns false if nothing was
+    // decoded (no model, empty input, decode failure).
+    bool decode(const std::vector<float>& pcm, bool wantTurns, std::vector<DecodedSeg>& out) {
+        out.clear();
 #ifdef GROMARCH_WITH_WHISPER
-        if (pcm.empty()) return QString();
-        if (!ensureModel()) return QString();
+        if (pcm.empty()) return false;
+        if (!ensureModel()) return false;
 
         // Pad short windows: whisper rejects sub-100 ms input and is unstable near it.
         const size_t minSamples = size_t(kMinDecodeSec * kSampleRate);
@@ -255,25 +283,35 @@ struct Impl {
         wparams.print_realtime   = false;
         wparams.print_timestamps = false;
         wparams.print_special    = false;
+        wparams.tdrz_enable      = wantTurns;
 
-        QString text;
+        // Window length before padding: whisper can time-stamp into the padding.
+        const double windowSec = double(pcm.size()) / kSampleRate;
         {
             std::lock_guard<std::mutex> lock(ctxMutex);
-            if (!ctx) return QString();
+            if (!ctx) return false;
             if (whisper_full(ctx, wparams, samples->data(), int(samples->size())) != 0) {
                 if (emitError) emitError(QStringLiteral("whisper_full() failed"));
-                return QString();
+                return false;
             }
             const int n = whisper_full_n_segments(ctx);
+            out.reserve(size_t(n));
             for (int i = 0; i < n; ++i) {
+                DecodedSeg d;
                 const char* piece = whisper_full_get_segment_text(ctx, i);
-                if (piece) text += QString::fromUtf8(piece);
+                if (piece) d.text = QString::fromUtf8(piece);
+                // whisper timestamps are in 10 ms units, relative to the window.
+                d.t0 = std::clamp(double(whisper_full_get_segment_t0(ctx, i)) / 100.0, 0.0, windowSec);
+                d.t1 = std::clamp(double(whisper_full_get_segment_t1(ctx, i)) / 100.0, d.t0, windowSec);
+                d.turnNext = wantTurns && whisper_full_get_segment_speaker_turn_next(ctx, i);
+                out.push_back(std::move(d));
             }
         }
-        return cleanupText(text);
+        return true;
 #else
         Q_UNUSED(pcm);
-        return QString();
+        Q_UNUSED(wantTurns);
+        return false;
 #endif
     }
 
@@ -281,17 +319,65 @@ struct Impl {
         StreamState& s = streams[stream];
         if (s.buf.empty()) return;
 
-        const QString text = decode(s.buf);
-        if (text.isEmpty() && !(final && s.partialOpen)) return;
+        // Turn detection only makes sense on the far end; "Me" is always speaker -1.
+        const bool turns = tdrz.load() && stream == int(Stream::System);
+        const double windowEnd = s.bufStart + double(s.buf.size()) / kSampleRate;
 
-        TranscriptSegment seg;
-        seg.stream = stream;
-        seg.t0 = s.bufStart;
-        seg.t1 = s.bufStart + double(s.buf.size()) / kSampleRate;
-        seg.text = text;
-        seg.final = final;
-        if (!final) s.partialOpen = true;
-        if (emitSegment) emitSegment(seg);
+        std::vector<DecodedSeg> decoded;
+        decode(s.buf, turns, decoded);
+
+        auto emitOne = [&](double t0, double t1, const QString& text, int speaker) {
+            TranscriptSegment seg;
+            seg.stream = stream;
+            seg.t0 = t0;
+            seg.t1 = t1;
+            seg.text = text;
+            seg.final = final;
+            seg.speaker = speaker;
+            if (!final) s.partialOpen = true;
+            if (emitSegment) emitSegment(seg);
+        };
+
+        // Partials re-decode the same audio every second, so they never advance
+        // the turn counter; they stay one concatenated segment carrying the
+        // counter as it stands. Non-tdrz windows keep the same shape, speaker -1.
+        if (!turns || !final) {
+            QString text;
+            for (const DecodedSeg& d : decoded) text += d.text;
+            text = cleanupText(text);
+            if (text.isEmpty() && !(final && s.partialOpen)) return;
+            emitOne(s.bufStart, windowEnd, text, turns ? systemTurn : -1);
+            return;
+        }
+
+        // Final tdrz window: a turn boundary can land mid-window, so emit one
+        // segment per run of whisper segments that share a speaker, using
+        // whisper's own timestamps instead of the whole-window span.
+        bool emitted = false;
+        size_t i = 0;
+        while (i < decoded.size()) {
+            size_t j = i;
+            QString text;
+            while (j < decoded.size()) {
+                text += decoded[j].text;
+                const bool boundary = decoded[j].turnNext;
+                ++j;
+                if (boundary) break;
+            }
+            const QString clean = cleanupText(text);
+            if (!clean.isEmpty()) {
+                emitOne(std::min(s.bufStart + decoded[i].t0, windowEnd),
+                        std::min(s.bufStart + decoded[j - 1].t1, windowEnd),
+                        clean, systemTurn);
+                emitted = true;
+            }
+            // The run ended on a turn boundary: everything after it is a new speaker.
+            if (decoded[j - 1].turnNext) ++systemTurn;
+            i = j;
+        }
+
+        // Nothing survived cleanup but a partial is on screen: close it out.
+        if (!emitted && s.partialOpen) emitOne(s.bufStart, windowEnd, QString(), systemTurn);
     }
 
     // Finalize the open window, then keep a short overlap so a word split across
@@ -446,6 +532,7 @@ void TranscribeEngine::begin() {
     if (!d) return;
     d->post([d] {
         for (StreamState& s : d->streams) s.reset();
+        d->systemTurn = 0;
         d->clearLoadFailure();
         d->ensureModel();
     });
