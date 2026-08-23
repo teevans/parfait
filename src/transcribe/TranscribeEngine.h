@@ -1,6 +1,7 @@
 #pragma once
 #include <QObject>
 #include <QString>
+#include <memory>
 #include "Types.h"
 
 namespace gromarch {
@@ -35,6 +36,10 @@ signals:
     void segmentReady(gromarch::TranscriptSegment segment);
     void finished();                  // all segments final after finish()
     void error(const QString& message);
+
+private:
+    struct Impl;                      // worker thread, whisper context, window state
+    std::unique_ptr<Impl> d;
 };
 
 } // namespace gromarch

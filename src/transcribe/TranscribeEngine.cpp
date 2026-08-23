@@ -2,7 +2,6 @@
 
 #include <QDir>
 #include <QFileInfo>
-#include <QHash>
 #include <QMetaObject>
 #include <QRegularExpression>
 #include <QStandardPaths>
@@ -13,6 +12,7 @@
 #include <condition_variable>
 #include <deque>
 #include <functional>
+#include <limits>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -39,6 +39,21 @@ constexpr double kMaxQueuedSec    = 30.0;  // backpressure: audio waiting in the
 constexpr float  kVadFloor        = 0.006f;  // absolute RMS gate
 constexpr float  kVadFactor       = 2.5f;    // ... and relative to the noise floor
 
+// Speaker-turn probe (tinydiarize, System stream only). A turn that falls on a
+// window boundary is invisible: the two voices never share a decode, no
+// [SPEAKER_TURN] token is ever produced, and the new speaker inherits the old
+// label. So each finalized window is decoded a second time with the previous
+// window's spoken tail glued in front of it, and only the *turn times* are taken
+// from that decode -- the transcript always comes from the window's own decode,
+// which the probe therefore cannot perturb. Turn times from the two decodes are
+// merged, so the probe can only ever add turns, never remove one.
+constexpr double kTurnTailSec      = 1.75;  // spoken audio carried over as the probe's head
+constexpr double kTailKeepSilSec   = 0.3;   // trailing silence kept with that tail
+constexpr double kTailSlackSec     = 0.2;   // timestamp slop when classifying tail segments
+constexpr double kTailMaxGapSec    = 8.0;   // a tail older than this is stale, not probed
+constexpr double kTurnMergeSec     = 1.0;   // turns this close are the same boundary seen twice
+constexpr double kTurnSlackSec     = 0.35;  // timestamp slop when placing a turn between segments
+
 // Per-capture-stream sliding window plus its VAD bookkeeping.
 struct StreamState {
     std::vector<float> buf;              // audio not yet finalized
@@ -53,12 +68,23 @@ struct StreamState {
     double sincePartialSec = 0.0;
     bool partialOpen = false;
 
+    // Speaker-turn replay state (System stream with a tdrz model only).
+    std::vector<float> turnTail;         // spoken tail of the previous finalized window
+    double turnTailEnd = 0.0;            // seconds from meeting start of its last sample
+    bool pendingTurn = false;            // turn token on that window's last segment, not yet counted
+
     void resetWindow() {
         speechSec = 0.0;
         silenceSec = 0.0;
         hadSpeech = false;
         sincePartialSec = 0.0;
         partialOpen = false;
+    }
+
+    void clearTurnTail() {
+        turnTail.clear();
+        turnTail.shrink_to_fit();
+        turnTailEnd = 0.0;
     }
 
     void reset() {
@@ -68,6 +94,8 @@ struct StreamState {
         clock = 0.0;
         started = false;
         noiseFloor = kVadFloor;
+        clearTurnTail();
+        pendingTurn = false;
         resetWindow();
     }
 };
@@ -104,23 +132,22 @@ QString cleanupText(QString text) {
     return text.trimmed();
 }
 
-// The frozen header carries no data members, so per-instance state lives here.
-struct Impl;
-std::mutex& registryMutex() {
-    static std::mutex m;
-    return m;
-}
-QHash<const TranscribeEngine*, Impl*>& registry() {
-    static QHash<const TranscribeEngine*, Impl*> r;
-    return r;
+// RMS of the kVadFrame samples ending at `end` (exclusive).
+float frameRms(const std::vector<float>& buf, size_t end) {
+    double sum = 0.0;
+    for (size_t i = end - size_t(kVadFrame); i < end; ++i) {
+        const double v = double(buf[i]);
+        sum += v * v;
+    }
+    return float(std::sqrt(sum / kVadFrame));
 }
 
-struct Impl {
-    // Signal trampolines; set up by the constructor, invoked on the worker thread.
-    std::function<void(const TranscriptSegment&)> emitSegment;
-    std::function<void()> emitFinished;
-    std::function<void(const QString&)> emitError;
-    std::function<void(bool)> emitAvailability;
+} // namespace
+
+struct TranscribeEngine::Impl {
+    explicit Impl(TranscribeEngine* engine) : q(engine) {}
+
+    TranscribeEngine* const q;
 
     std::atomic<bool> available{false};
     std::atomic<bool> quit{false};
@@ -146,6 +173,29 @@ struct Impl {
     whisper_context* ctx = nullptr;
     bool loadFailed = false;
 #endif
+
+    // ---- signals -----------------------------------------------------------
+    // Called on the worker thread; marshalled back onto the engine's thread.
+
+    void emitSegment(const TranscriptSegment& seg) {
+        TranscribeEngine* engine = q;
+        QMetaObject::invokeMethod(engine, [engine, seg] { emit engine->segmentReady(seg); },
+                                  Qt::QueuedConnection);
+    }
+    void emitFinished() {
+        TranscribeEngine* engine = q;
+        QMetaObject::invokeMethod(engine, [engine] { emit engine->finished(); }, Qt::QueuedConnection);
+    }
+    void emitError(const QString& message) {
+        TranscribeEngine* engine = q;
+        QMetaObject::invokeMethod(engine, [engine, message] { emit engine->error(message); },
+                                  Qt::QueuedConnection);
+    }
+    void emitAvailability(bool ok) {
+        TranscribeEngine* engine = q;
+        QMetaObject::invokeMethod(engine, [engine, ok] { emit engine->availabilityChanged(ok); },
+                                  Qt::QueuedConnection);
+    }
 
     QString modelPath() const {
         std::lock_guard<std::mutex> lock(pathMutex);
@@ -221,12 +271,12 @@ struct Impl {
         const bool ok = fresh != nullptr;
         tdrz.store(ok && modelSupportsTdrz(want));
         available.store(ok);
-        if (emitAvailability) emitAvailability(ok);
-        if (!ok && emitError) emitError(failure);
+        emitAvailability(ok);
+        if (!ok) emitError(failure);
         return ok;
 #else
         tdrz.store(false);
-        if (available.exchange(false) && emitAvailability) emitAvailability(false);
+        if (available.exchange(false)) emitAvailability(false);
         return false;
 #endif
     }
@@ -291,7 +341,7 @@ struct Impl {
             std::lock_guard<std::mutex> lock(ctxMutex);
             if (!ctx) return false;
             if (whisper_full(ctx, wparams, samples->data(), int(samples->size())) != 0) {
-                if (emitError) emitError(QStringLiteral("whisper_full() failed"));
+                emitError(QStringLiteral("whisper_full() failed"));
                 return false;
             }
             const int n = whisper_full_n_segments(ctx);
@@ -315,6 +365,55 @@ struct Impl {
 #endif
     }
 
+    // ---- speaker-turn replay -----------------------------------------------
+
+    // Keep the last kTurnTailSec of *spoken* audio from the window being closed:
+    // the trailing silence carries no speaker identity, so it is skipped (bar a
+    // short slice that keeps the utterance gap visible to whisper). Bounded by
+    // construction at kTurnTailSec + kTailKeepSilSec of samples.
+    void captureTurnTail(StreamState& s) {
+        const size_t frame = size_t(kVadFrame);
+        const float gate = std::max(kVadFloor, s.noiseFloor * kVadFactor);
+
+        size_t end = (s.buf.size() / frame) * frame;
+        while (end >= frame && frameRms(s.buf, end) <= gate) end -= frame;
+        if (end < frame) {                  // nothing voiced in this window after all
+            s.clearTurnTail();
+            return;
+        }
+
+        end = std::min(s.buf.size(), end + size_t(kTailKeepSilSec * kSampleRate));
+        const size_t want = size_t(kTurnTailSec * kSampleRate);
+        const size_t start = end > want ? end - want : 0;
+        s.turnTail.assign(s.buf.begin() + qsizetype(start), s.buf.begin() + qsizetype(end));
+        s.turnTailEnd = s.bufStart + double(end) / kSampleRate;
+    }
+
+    // Decode [previous window's spoken tail | this window] and report where
+    // whisper puts speaker turns, in this window's own seconds. A time at or
+    // before the window's first text means the turn is on the seam itself. The
+    // tail earns its keep twice: it is the only way a seam turn can be seen at
+    // all, and it gives tdrz the conversational context it needs to fire inside
+    // the window as well.
+    void probeTurnBoundaries(StreamState& s, std::vector<double>& out) {
+        if (s.turnTail.empty()) return;
+        if (s.bufStart - s.turnTailEnd > kTailMaxGapSec) {   // stale: a long pause, not a seam
+            s.clearTurnTail();
+            return;
+        }
+
+        const double tailSec = double(s.turnTail.size()) / kSampleRate;
+        std::vector<float> probe;
+        probe.reserve(s.turnTail.size() + s.buf.size());
+        probe.insert(probe.end(), s.turnTail.begin(), s.turnTail.end());
+        probe.insert(probe.end(), s.buf.begin(), s.buf.end());
+
+        std::vector<DecodedSeg> segs;
+        if (!decode(probe, true, segs)) return;
+        for (const DecodedSeg& d : segs)
+            if (d.turnNext) out.push_back(d.t1 - tailSec);
+    }
+
     void emitWindow(int stream, bool final) {
         StreamState& s = streams[stream];
         if (s.buf.empty()) return;
@@ -335,7 +434,7 @@ struct Impl {
             seg.final = final;
             seg.speaker = speaker;
             if (!final) s.partialOpen = true;
-            if (emitSegment) emitSegment(seg);
+            emitSegment(seg);
         };
 
         // Partials re-decode the same audio every second, so they never advance
@@ -346,23 +445,70 @@ struct Impl {
             for (const DecodedSeg& d : decoded) text += d.text;
             text = cleanupText(text);
             if (text.isEmpty() && !(final && s.partialOpen)) return;
-            emitOne(s.bufStart, windowEnd, text, turns ? systemTurn : -1);
+            const int speaker = turns ? systemTurn + (s.pendingTurn ? 1 : 0) : -1;
+            emitOne(s.bufStart, windowEnd, text, speaker);
             return;
         }
 
-        // Final tdrz window: a turn boundary can land mid-window, so emit one
-        // segment per run of whisper segments that share a speaker, using
-        // whisper's own timestamps instead of the whole-window span.
+        // Where the speaker changes in this window: what the window's own decode
+        // saw, plus what the tail probe saw, merged so one boundary reported by
+        // both decodes is still one boundary.
+        std::vector<double> boundaries;
+        for (const DecodedSeg& d : decoded)
+            if (d.turnNext) boundaries.push_back(d.t1);
+        probeTurnBoundaries(s, boundaries);
+        std::sort(boundaries.begin(), boundaries.end());
+        boundaries.erase(std::unique(boundaries.begin(), boundaries.end(),
+                                     [](double kept, double next) {
+                                         return next - kept < kTurnMergeSec;
+                                     }),
+                         boundaries.end());
+
+        // Boundaries sitting at or before the first text are on the seam, and owe
+        // this window's head exactly one turn -- as does a turn deferred from the
+        // previous window (see the run loop), which is the same boundary seen
+        // from the other side and must not be counted twice.
+        const double firstT0 = decoded.empty() ? 0.0 : decoded.front().t0;
+        size_t bi = 0;
+        bool seam = false;
+        while (bi < boundaries.size() && boundaries[bi] <= firstT0 + kTurnSlackSec) {
+            seam = true;
+            ++bi;
+        }
+        const bool turnBefore = s.pendingTurn || seam;
+
+        // Nothing decoded: hold the seam turn over rather than spending it on a
+        // window that labels no text.
+        if (decoded.empty()) {
+            s.pendingTurn = turnBefore;
+            if (s.partialOpen) emitOne(s.bufStart, windowEnd, QString(), systemTurn);
+            return;
+        }
+        if (turnBefore) ++systemTurn;
+        s.pendingTurn = false;
+
+        // Emit one segment per run of whisper segments that share a speaker,
+        // using whisper's own timestamps instead of the whole-window span.
         bool emitted = false;
         size_t i = 0;
         while (i < decoded.size()) {
             size_t j = i;
             QString text;
+            bool cut = false;
             while (j < decoded.size()) {
                 text += decoded[j].text;
-                const bool boundary = decoded[j].turnNext;
                 ++j;
-                if (boundary) break;
+                // Boundaries inside the segment just consumed are behind us.
+                while (bi < boundaries.size() && boundaries[bi] <= decoded[j - 1].t0) ++bi;
+                if (bi >= boundaries.size()) continue;
+                const double nextT0 = j < decoded.size()
+                                          ? decoded[j].t0 + kTurnSlackSec
+                                          : std::numeric_limits<double>::max();
+                if (boundaries[bi] <= nextT0) {
+                    ++bi;
+                    cut = true;
+                    break;
+                }
             }
             const QString clean = cleanupText(text);
             if (!clean.isEmpty()) {
@@ -371,8 +517,14 @@ struct Impl {
                         clean, systemTurn);
                 emitted = true;
             }
-            // The run ended on a turn boundary: everything after it is a new speaker.
-            if (decoded[j - 1].turnNext) ++systemTurn;
+            if (cut) {
+                // A turn after the window's last segment is ambiguous: whisper saw
+                // the change coming but the new voice is in the next window. Defer
+                // it there, where the seam decides the same boundary again --
+                // counting it here as well would count one boundary twice.
+                if (j == decoded.size()) s.pendingTurn = true;
+                else ++systemTurn;      // the run that follows is the new speaker
+            }
             i = j;
         }
 
@@ -384,7 +536,10 @@ struct Impl {
     // the boundary still has context in the next window.
     void closeWindow(int stream) {
         StreamState& s = streams[stream];
-        if (s.hadSpeech) emitWindow(stream, true);
+        if (s.hadSpeech) {
+            emitWindow(stream, true);
+            if (tdrz.load() && stream == int(Stream::System)) captureTurnTail(s);
+        }
 
         const size_t keep = std::min(s.buf.size(), size_t(kOverlapSec * kSampleRate));
         const size_t drop = s.buf.size() - keep;
@@ -462,115 +617,80 @@ struct Impl {
     }
 };
 
-Impl* implFor(const TranscribeEngine* engine) {
-    std::lock_guard<std::mutex> lock(registryMutex());
-    return registry().value(engine, nullptr);
-}
-
-} // namespace
-
-TranscribeEngine::TranscribeEngine(QObject* parent) : QObject(parent) {
-    auto* d = new Impl;
-    {
-        std::lock_guard<std::mutex> lock(registryMutex());
-        registry().insert(this, d);
-    }
-
-    // Marshal everything back onto this object's thread before emitting.
-    d->emitSegment = [this](const TranscriptSegment& seg) {
-        QMetaObject::invokeMethod(this, [this, seg] { emit segmentReady(seg); }, Qt::QueuedConnection);
-    };
-    d->emitFinished = [this] {
-        QMetaObject::invokeMethod(this, [this] { emit finished(); }, Qt::QueuedConnection);
-    };
-    d->emitError = [this](const QString& message) {
-        QMetaObject::invokeMethod(this, [this, message] { emit error(message); }, Qt::QueuedConnection);
-    };
-    d->emitAvailability = [this](bool ok) {
-        QMetaObject::invokeMethod(this, [this, ok] { emit availabilityChanged(ok); }, Qt::QueuedConnection);
-    };
-
-    d->worker = std::thread([d] { d->run(); });
+TranscribeEngine::TranscribeEngine(QObject* parent)
+    : QObject(parent), d(std::make_unique<Impl>(this)) {
+    Impl* impl = d.get();
+    impl->worker = std::thread([impl] { impl->run(); });
 }
 
 TranscribeEngine::~TranscribeEngine() {
-    Impl* d = implFor(this);
-    if (!d) return;
-    {
-        std::lock_guard<std::mutex> lock(registryMutex());
-        registry().remove(this);
-    }
     d->stop();
     d->freeModel();
-    delete d;
 }
 
 bool TranscribeEngine::isAvailable() const {
-    Impl* d = implFor(this);
-    return d && d->available.load();
+    return d->available.load();
 }
 
 QString TranscribeEngine::modelPath() const {
-    Impl* d = implFor(this);
-    return d ? d->modelPath() : QString();
+    return d->modelPath();
 }
 
 void TranscribeEngine::setModelPath(const QString& path) {
-    Impl* d = implFor(this);
-    if (!d) return;
     if (d->modelPath() == path) return;
     d->setPath(path);
     emit modelPathChanged();
-    d->post([d] {                          // lazy load on the worker
-        d->clearLoadFailure();
-        d->ensureModel();
+    Impl* impl = d.get();
+    impl->post([impl] {                    // lazy load on the worker
+        impl->clearLoadFailure();
+        impl->ensureModel();
     });
 }
 
 void TranscribeEngine::begin() {
-    Impl* d = implFor(this);
-    if (!d) return;
-    d->post([d] {
-        for (StreamState& s : d->streams) s.reset();
-        d->systemTurn = 0;
-        d->clearLoadFailure();
-        d->ensureModel();
+    Impl* impl = d.get();
+    impl->post([impl] {
+        for (StreamState& s : impl->streams) s.reset();
+        impl->systemTurn = 0;
+        impl->clearLoadFailure();
+        impl->ensureModel();
     });
 }
 
 void TranscribeEngine::feed(int stream, QByteArray f32Samples, double t0) {
-    Impl* d = implFor(this);
-    if (!d || stream < 0 || stream > 1 || f32Samples.isEmpty()) return;
+    if (stream < 0 || stream > 1 || f32Samples.isEmpty()) return;
 
     const qint64 count = qint64(f32Samples.size()) / qint64(sizeof(float));
     if (d->queuedSamples.load() > qint64(kMaxQueuedSec * kSampleRate)) return;   // backpressure
     d->queuedSamples.fetch_add(count);
 
-    d->post([d, stream, f32Samples, t0, count] {
+    Impl* impl = d.get();
+    impl->post([impl, stream, f32Samples, t0, count] {
 #ifdef GROMARCH_WITH_WHISPER
-        d->handleAudio(stream, f32Samples, t0);
+        impl->handleAudio(stream, f32Samples, t0);
 #else
         Q_UNUSED(stream);
         Q_UNUSED(t0);
 #endif
-        d->queuedSamples.fetch_sub(count);
+        impl->queuedSamples.fetch_sub(count);
     });
 }
 
 void TranscribeEngine::finish() {
-    Impl* d = implFor(this);
-    if (!d) return;
-    d->post([d] {
+    Impl* impl = d.get();
+    impl->post([impl] {
 #ifdef GROMARCH_WITH_WHISPER
         for (int stream = 0; stream < 2; ++stream) {
-            StreamState& s = d->streams[stream];
-            if (s.hadSpeech && !s.buf.empty()) d->emitWindow(stream, true);
+            StreamState& s = impl->streams[stream];
+            if (s.hadSpeech && !s.buf.empty()) impl->emitWindow(stream, true);
             s.buf.clear();
             s.vadTail.clear();
+            s.clearTurnTail();
+            s.pendingTurn = false;
             s.resetWindow();
         }
 #endif
-        if (d->emitFinished) d->emitFinished();
+        impl->emitFinished();
     });
 }
 

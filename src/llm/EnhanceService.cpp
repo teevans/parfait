@@ -2,7 +2,6 @@
 #include "llm/Prompts.h"
 
 #include <QByteArray>
-#include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -24,35 +23,6 @@ constexpr int kConnectTimeoutMs = 30000;
 constexpr int kTransferTimeoutMs = 300000;
 
 enum class Job { None, Enhance, Title };
-
-// The interface header is frozen (no data members), so per-instance state lives here.
-struct Priv {
-    QNetworkAccessManager nam;
-    QNetworkReply* reply = nullptr;
-    QTimer stall;
-    QByteArray sseBuffer;
-    QString accumulated;
-    Job job = Job::None;
-    bool busy = false;
-    bool cancelled = false;
-    bool sawData = false;
-    bool configured = false;
-
-    // Re-read at every request start so Settings UI edits apply live.
-    QString baseUrl;
-    QString apiKey;
-    QString model;
-    QString fastModel;
-};
-
-QHash<const EnhanceService*, Priv*>& registry() {
-    static QHash<const EnhanceService*, Priv*> map;
-    return map;
-}
-
-Priv* priv(const EnhanceService* s) {
-    return registry().value(s, nullptr);
-}
 
 QString settingsBaseUrl() {
     QSettings s(QStringLiteral("gromarch"), QStringLiteral("gromarch"));
@@ -104,29 +74,42 @@ QString cleanTitle(QString t) {
 
 } // namespace
 
-EnhanceService::EnhanceService(QObject* parent) : QObject(parent) {
-    auto* p = new Priv;
-    registry().insert(this, p);
-    p->configured = isConfigured();
-    p->stall.setSingleShot(true);
+struct EnhanceService::Impl {
+    QNetworkAccessManager nam;
+    QNetworkReply* reply = nullptr;
+    QTimer stall;
+    QByteArray sseBuffer;
+    QString accumulated;
+    Job job = Job::None;
+    bool busy = false;
+    bool cancelled = false;
+    bool sawData = false;
+    bool configured = false;
+
+    // Re-read at every request start so Settings UI edits apply live.
+    QString baseUrl;
+    QString apiKey;
+    QString model;
+    QString fastModel;
+};
+
+EnhanceService::EnhanceService(QObject* parent)
+    : QObject(parent), d(std::make_unique<Impl>()) {
+    d->configured = isConfigured();
+    d->stall.setSingleShot(true);
 }
 
 EnhanceService::~EnhanceService() {
-    Priv* p = priv(this);
-    registry().remove(this);
-    if (!p) return;
-    if (p->reply) {
-        p->reply->disconnect();
-        p->reply->abort();
-        p->reply->deleteLater();
-        p->reply = nullptr;
+    if (d->reply) {
+        d->reply->disconnect();
+        d->reply->abort();
+        d->reply->deleteLater();
+        d->reply = nullptr;
     }
-    delete p;
 }
 
 bool EnhanceService::isBusy() const {
-    const Priv* p = priv(this);
-    return p && p->busy;
+    return d->busy;
 }
 
 bool EnhanceService::isConfigured() const {
@@ -134,8 +117,8 @@ bool EnhanceService::isConfigured() const {
 }
 
 void EnhanceService::cancel() {
-    Priv* p = priv(this);
-    if (!p || !p->reply) return;
+    Impl* p = d.get();
+    if (!p->reply) return;
     p->cancelled = true;
     p->stall.stop();
     QNetworkReply* r = p->reply;
@@ -152,8 +135,7 @@ void EnhanceService::cancel() {
 
 void EnhanceService::enhance(const QString& cuesMd, const QString& transcriptText,
                              const QString& templateId) {
-    Priv* p = priv(this);
-    if (!p) return;
+    Impl* p = d.get();
 
     cancel();   // one job at a time — a new enhance supersedes the running one
 
@@ -316,8 +298,7 @@ void EnhanceService::enhance(const QString& cuesMd, const QString& transcriptTex
 }
 
 void EnhanceService::suggestTitle(const QString& transcriptText) {
-    Priv* p = priv(this);
-    if (!p) return;
+    Impl* p = d.get();
     if (transcriptText.trimmed().isEmpty()) return;
 
     const QString baseUrl = settingsBaseUrl();

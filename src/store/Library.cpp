@@ -4,10 +4,8 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
-#include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
-#include <QMutex>
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QSet>
@@ -28,8 +26,6 @@
 namespace gromarch {
 namespace {
 
-// Library.h is a frozen interface with no private data, so per-instance state
-// lives in this side table keyed by the object pointer.
 // Bumped whenever the on-disk schema changes; see the migration ladder in open().
 // v1: initial schema.  v2: segments.speaker (diarization turn index, -1 = unknown).
 constexpr int kSchemaVersion = 2;
@@ -39,21 +35,6 @@ enum class FtsMode {
     Contentless,    // fts5(..., content='', contentless_delete=1)  [SQLite >= 3.43]
     Standard        // plain fts5(...) storing its own copy of the text
 };
-
-struct LibState {
-    QString connName;
-    FtsMode fts = FtsMode::None;
-    QSet<qint64> dirty;      // meetings whose transcript index is stale
-    bool opened = false;
-};
-
-QHash<const Library*, LibState*> g_state;
-QMutex g_stateMutex;
-
-LibState* state(const Library* self) {
-    QMutexLocker lock(&g_stateMutex);
-    return g_state.value(self, nullptr);
-}
 
 QString isoOrEmpty(const QDateTime& dt) {
     return dt.isValid() ? dt.toString(Qt::ISODate) : QString();
@@ -126,20 +107,22 @@ QString sanitizeTitle(const QString& title) {
 
 } // namespace
 
-Library::Library(QObject* parent) : QObject(parent) {
-    auto* s = new LibState;
-    s->connName = QString("gromarch_library_%1").arg(reinterpret_cast<quintptr>(this));
-    QMutexLocker lock(&g_stateMutex);
-    g_state.insert(this, s);
+struct Library::Impl {
+    QString connName;
+    FtsMode fts = FtsMode::None;
+    QSet<qint64> dirty;      // meetings whose transcript index is stale
+    bool opened = false;
+
+    void reindexMeeting(qint64 id);
+    void flushDirty();
+};
+
+Library::Library(QObject* parent) : QObject(parent), d(std::make_unique<Impl>()) {
+    d->connName = QString("gromarch_library_%1").arg(reinterpret_cast<quintptr>(this));
 }
 
 Library::~Library() {
-    LibState* s = nullptr;
-    {
-        QMutexLocker lock(&g_stateMutex);
-        s = g_state.take(this);
-    }
-    if (!s) return;
+    Impl* s = d.get();
     if (QSqlDatabase::contains(s->connName)) {
         {
             QSqlDatabase db = QSqlDatabase::database(s->connName, false);
@@ -147,12 +130,10 @@ Library::~Library() {
         }
         QSqlDatabase::removeDatabase(s->connName);
     }
-    delete s;
 }
 
 bool Library::open() {
-    LibState* s = state(this);
-    if (!s) return false;
+    Impl* s = d.get();
     if (s->opened) return true;
 
     QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
@@ -281,10 +262,9 @@ bool Library::open() {
 // transcript row per segment — and the deferred rows are flushed before any search()
 // and on the next updateMeeting, so query results are never stale.
 
-namespace {
-
-void reindexMeeting(LibState* s, qint64 id) {
-    if (!s || s->fts == FtsMode::None || id < 0) return;
+void Library::Impl::reindexMeeting(qint64 id) {
+    Impl* s = this;
+    if (s->fts == FtsMode::None || id < 0) return;
     QSqlDatabase db = QSqlDatabase::database(s->connName, false);
     if (!db.isOpen()) return;
 
@@ -324,18 +304,17 @@ void reindexMeeting(LibState* s, qint64 id) {
     s->dirty.remove(id);
 }
 
-void flushDirty(LibState* s) {
-    if (!s || s->dirty.isEmpty()) return;
+void Library::Impl::flushDirty() {
+    Impl* s = this;
+    if (s->dirty.isEmpty()) return;
     const QList<qint64> ids = s->dirty.values();
-    for (qint64 id : ids) reindexMeeting(s, id);
+    for (qint64 id : ids) s->reindexMeeting(id);
     s->dirty.clear();
 }
 
-} // namespace
-
 qint64 Library::createMeeting(const Meeting& m) {
-    LibState* s = state(this);
-    if (!s || !s->opened) {
+    Impl* s = d.get();
+    if (!s->opened) {
         emit error(QStringLiteral("Library is not open"));
         return -1;
     }
@@ -361,13 +340,13 @@ qint64 Library::createMeeting(const Meeting& m) {
         return -1;
     }
     const qint64 id = q.lastInsertId().toLongLong();
-    reindexMeeting(s, id);
+    s->reindexMeeting(id);
     emit meetingsChanged();
     return id;
 }
 
 void Library::updateMeeting(const Meeting& m) {
-    LibState* s = state(this);
+    Impl* s = d.get();
     if (!s || !s->opened) {
         emit error(QStringLiteral("Library is not open"));
         return;
@@ -398,13 +377,13 @@ void Library::updateMeeting(const Meeting& m) {
         emit error(msg);
         return;
     }
-    reindexMeeting(s, m.id);
+    s->reindexMeeting(m.id);
     emit meetingsChanged();
 }
 
 Meeting Library::meeting(qint64 id) const {
     Meeting m;
-    LibState* s = state(this);
+    Impl* s = d.get();
     if (!s || !s->opened) return m;
     QSqlDatabase db = QSqlDatabase::database(s->connName, false);
     QSqlQuery q(db);
@@ -422,7 +401,7 @@ Meeting Library::meeting(qint64 id) const {
 
 QList<Meeting> Library::allMeetings() const {
     QList<Meeting> out;
-    LibState* s = state(this);
+    Impl* s = d.get();
     if (!s || !s->opened) return out;
     QSqlDatabase db = QSqlDatabase::database(s->connName, false);
     QSqlQuery q(db);
@@ -436,7 +415,7 @@ QList<Meeting> Library::allMeetings() const {
 }
 
 void Library::appendSegment(const TranscriptSegment& seg) {
-    LibState* s = state(this);
+    Impl* s = d.get();
     if (!s || !s->opened) return;
     if (seg.meetingId < 0) {
         emit error(QStringLiteral("appendSegment: invalid meeting id"));
@@ -463,7 +442,7 @@ void Library::appendSegment(const TranscriptSegment& seg) {
 
 QList<TranscriptSegment> Library::segments(qint64 meetingId) const {
     QList<TranscriptSegment> out;
-    LibState* s = state(this);
+    Impl* s = d.get();
     if (!s || !s->opened) return out;
     QSqlDatabase db = QSqlDatabase::database(s->connName, false);
     QSqlQuery q(db);
@@ -514,12 +493,12 @@ QString Library::transcriptText(qint64 meetingId) const {
 
 QList<Meeting> Library::search(const QString& query) const {
     QList<Meeting> out;
-    LibState* s = state(this);
+    Impl* s = d.get();
     if (!s || !s->opened) return out;
     const QString trimmed = query.trimmed();
     if (trimmed.isEmpty()) return allMeetings();
 
-    flushDirty(s);
+    s->flushDirty();
     QSqlDatabase db = QSqlDatabase::database(s->connName, false);
     QSqlQuery q(db);
 

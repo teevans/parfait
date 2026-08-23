@@ -1,6 +1,7 @@
 #pragma once
 #include <QList>
 #include <QObject>
+#include <memory>
 #include "Types.h"
 
 namespace gromarch {
@@ -27,6 +28,10 @@ signals:
     // Fired once per event, ~2 minutes before start.
     void meetingImminent(gromarch::CalendarEvent event);
     void error(const QString& message);
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> d;
 };
 
 } // namespace gromarch

@@ -1,6 +1,7 @@
 #pragma once
 #include <QColor>
 #include <QObject>
+#include <memory>
 
 namespace gromarch {
 
@@ -49,6 +50,10 @@ public slots:
 
 signals:
     void themeChanged();
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> d;
 };
 
 } // namespace gromarch

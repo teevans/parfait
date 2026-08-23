@@ -16,8 +16,6 @@
 namespace gromarch {
 namespace {
 
-// The header is a frozen contract with no data members, so per-instance state
-// lives here and is torn down when the object is destroyed.
 struct Palette {
     QColor background;
     QColor darkBackground;
@@ -32,24 +30,6 @@ struct Palette {
     QColor red;
     QColor blue;
 };
-
-struct Priv {
-    Palette palette;
-    QString path;                 // resolved colors.toml (may be empty)
-    QString monoFont;
-    QString uiFont;
-    QFileSystemWatcher* watcher = nullptr;
-    QTimer* debounce = nullptr;
-};
-
-QHash<const ThemeService*, Priv*>& registry() {
-    static QHash<const ThemeService*, Priv*> map;
-    return map;
-}
-
-Priv* priv(const ThemeService* self) {
-    return registry().value(self);
-}
 
 // ---- built-in fallback (Tokyo Night) ----------------------------------------
 
@@ -218,10 +198,24 @@ Palette loadPalette(const QString& path) {
     return p;
 }
 
-// Watch the file plus every parent directory up to ~/.config so that a
-// `current/theme` symlink swap (which replaces a directory, not the file)
-// still wakes us up.
-void rewatch(Priv* d) {
+} // namespace
+
+struct ThemeService::Impl {
+    Palette palette;
+    QString path;                 // resolved colors.toml (may be empty)
+    QString monoFont;
+    QString uiFont;
+    QFileSystemWatcher* watcher = nullptr;
+    QTimer* debounce = nullptr;
+
+    // Watch the file plus every parent directory up to ~/.config so that a
+    // `current/theme` symlink swap (which replaces a directory, not the file)
+    // still wakes us up.
+    void rewatch();
+};
+
+void ThemeService::Impl::rewatch() {
+    Impl* d = this;
     if (!d->watcher) return;
     if (!d->watcher->files().isEmpty()) d->watcher->removePaths(d->watcher->files());
     if (!d->watcher->directories().isEmpty()) d->watcher->removePaths(d->watcher->directories());
@@ -244,12 +238,7 @@ void rewatch(Priv* d) {
     if (!paths.isEmpty()) d->watcher->addPaths(paths);
 }
 
-} // namespace
-
-ThemeService::ThemeService(QObject* parent) : QObject(parent) {
-    auto* d = new Priv;
-    registry().insert(this, d);
-
+ThemeService::ThemeService(QObject* parent) : QObject(parent), d(std::make_unique<Impl>()) {
     d->monoFont = pickFont({QStringLiteral("CaskaydiaMono Nerd Font"),
                             QStringLiteral("CaskaydiaCove Nerd Font"),
                             QStringLiteral("Cascadia Mono"),
@@ -269,84 +258,64 @@ ThemeService::ThemeService(QObject* parent) : QObject(parent) {
     d->debounce->setInterval(100);
     connect(d->debounce, &QTimer::timeout, this, &ThemeService::reload);
 
-    const auto kick = [this] {
-        if (Priv* p = priv(this)) p->debounce->start();
-    };
+    const auto kick = [this] { d->debounce->start(); };
     connect(d->watcher, &QFileSystemWatcher::fileChanged, this, kick);
     connect(d->watcher, &QFileSystemWatcher::directoryChanged, this, kick);
-    rewatch(d);
+    d->rewatch();
 }
 
-ThemeService::~ThemeService() {
-    delete registry().take(this);
-}
+ThemeService::~ThemeService() = default;
 
 void ThemeService::reload() {
-    Priv* d = priv(this);
-    if (!d) return;
     d->path = resolveThemePath();
     d->palette = loadPalette(d->path);
-    rewatch(d);
+    d->rewatch();
     emit themeChanged();
 }
 
 QColor ThemeService::background() const {
-    Priv* d = priv(this);
-    return d ? d->palette.background : builtinPalette().background;
+    return d->palette.background;
 }
 QColor ThemeService::darkBackground() const {
-    Priv* d = priv(this);
-    return d ? d->palette.darkBackground : builtinPalette().darkBackground;
+    return d->palette.darkBackground;
 }
 QColor ThemeService::darkerBackground() const {
-    Priv* d = priv(this);
-    return d ? d->palette.darkerBackground : builtinPalette().darkerBackground;
+    return d->palette.darkerBackground;
 }
 QColor ThemeService::lighterBackground() const {
-    Priv* d = priv(this);
-    return d ? d->palette.lighterBackground : builtinPalette().lighterBackground;
+    return d->palette.lighterBackground;
 }
 QColor ThemeService::foreground() const {
-    Priv* d = priv(this);
-    return d ? d->palette.foreground : builtinPalette().foreground;
+    return d->palette.foreground;
 }
 QColor ThemeService::mutedForeground() const {
-    Priv* d = priv(this);
-    return d ? d->palette.mutedForeground : builtinPalette().mutedForeground;
+    return d->palette.mutedForeground;
 }
 QColor ThemeService::brightForeground() const {
-    Priv* d = priv(this);
-    return d ? d->palette.brightForeground : builtinPalette().brightForeground;
+    return d->palette.brightForeground;
 }
 QColor ThemeService::accent() const {
-    Priv* d = priv(this);
-    return d ? d->palette.accent : builtinPalette().accent;
+    return d->palette.accent;
 }
 QColor ThemeService::selection() const {
-    Priv* d = priv(this);
-    return d ? d->palette.selection : builtinPalette().selection;
+    return d->palette.selection;
 }
 QColor ThemeService::muted() const {
-    Priv* d = priv(this);
-    return d ? d->palette.muted : builtinPalette().muted;
+    return d->palette.muted;
 }
 QColor ThemeService::red() const {
-    Priv* d = priv(this);
-    return d ? d->palette.red : builtinPalette().red;
+    return d->palette.red;
 }
 QColor ThemeService::blue() const {
-    Priv* d = priv(this);
-    return d ? d->palette.blue : builtinPalette().blue;
+    return d->palette.blue;
 }
 
 QString ThemeService::monoFont() const {
-    Priv* d = priv(this);
-    return d ? d->monoFont : QStringLiteral("monospace");
+    return d->monoFont;
 }
 
 QString ThemeService::uiFont() const {
-    Priv* d = priv(this);
-    return d ? d->uiFont : QStringLiteral("sans-serif");
+    return d->uiFont;
 }
 
 } // namespace gromarch

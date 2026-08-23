@@ -1,6 +1,7 @@
 #pragma once
 #include <QObject>
 #include <QString>
+#include <memory>
 #include "Types.h"
 
 namespace gromarch {
@@ -33,6 +34,10 @@ signals:
     // 16 kHz mono f32 PCM chunk for one stream; t0 = seconds from start().
     void pcmReady(int stream, QByteArray f32Samples, double t0);
     void error(const QString& message);
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> d;
 };
 
 } // namespace gromarch

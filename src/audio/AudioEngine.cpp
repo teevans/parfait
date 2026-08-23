@@ -10,8 +10,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
-#include <functional>
-#include <map>
+#include <memory>
 #include <mutex>
 #include <vector>
 
@@ -51,10 +50,9 @@ void atomicMax(std::atomic<float>& slot, float v) {
 
 // ---------------------------------------------------------------------------
 
-class AudioEngineImpl {
-public:
+struct AudioEngine::Impl {
     struct StreamCtx {
-        AudioEngineImpl* d = nullptr;
+        Impl* d = nullptr;
         int index = 0;
         pw_stream* stream = nullptr;
         spa_hook listener{};
@@ -64,10 +62,9 @@ public:
         std::atomic<float> level{0.0f}; // published value read by micLevel()/systemLevel()
     };
 
-    std::function<void(int, QByteArray, double)> emitPcm;
-    std::function<void(const QString&)> emitError;
-    std::function<void(bool)> emitRecording;
-    std::function<void()> emitLevels;
+    explicit Impl(AudioEngine* owner) : q(owner) {}
+
+    AudioEngine* q = nullptr;   // signals are emitted through the owner
 
     bool recording = false;
     pw_thread_loop* loop = nullptr;
@@ -85,12 +82,16 @@ public:
     bool openEncoder(const QString& path, QString* err);
     void closeEncoder();
     void teardownPipeWire();
+
+    // PipeWire callbacks. Static members so they can reach the private nested types.
+    static void onStreamProcess(void* userdata);
+    static void onStreamStateChanged(void* userdata, enum pw_stream_state oldState,
+                                     enum pw_stream_state state, const char* message);
+    static const pw_stream_events kStreamEvents;
 };
 
-namespace {
-
-void onStreamProcess(void* userdata) {
-    auto* s = static_cast<AudioEngineImpl::StreamCtx*>(userdata);
+void AudioEngine::Impl::onStreamProcess(void* userdata) {
+    auto* s = static_cast<StreamCtx*>(userdata);
     pw_buffer* b = pw_stream_dequeue_buffer(s->stream);
     if (!b) return;
 
@@ -105,26 +106,24 @@ void onStreamProcess(void* userdata) {
     pw_stream_queue_buffer(s->stream, b);
 }
 
-void onStreamStateChanged(void* userdata, enum pw_stream_state /*old*/, enum pw_stream_state state,
-                          const char* message) {
-    auto* s = static_cast<AudioEngineImpl::StreamCtx*>(userdata);
-    if (state == PW_STREAM_STATE_ERROR && s->d->emitError) {
-        s->d->emitError(QStringLiteral("PipeWire %1 stream error: %2")
-                            .arg(s->index == 0 ? QStringLiteral("microphone")
-                                               : QStringLiteral("system audio"),
-                                 QString::fromUtf8(message ? message : "unknown")));
+void AudioEngine::Impl::onStreamStateChanged(void* userdata, enum pw_stream_state /*old*/,
+                                             enum pw_stream_state state, const char* message) {
+    auto* s = static_cast<StreamCtx*>(userdata);
+    if (state == PW_STREAM_STATE_ERROR) {
+        emit s->d->q->error(QStringLiteral("PipeWire %1 stream error: %2")
+                                .arg(s->index == 0 ? QStringLiteral("microphone")
+                                                   : QStringLiteral("system audio"),
+                                     QString::fromUtf8(message ? message : "unknown")));
     }
 }
 
-const pw_stream_events kStreamEvents = {
+const pw_stream_events AudioEngine::Impl::kStreamEvents = {
     .version = PW_VERSION_STREAM_EVENTS,
-    .state_changed = onStreamStateChanged,
-    .process = onStreamProcess,
+    .state_changed = AudioEngine::Impl::onStreamStateChanged,
+    .process = AudioEngine::Impl::onStreamProcess,
 };
 
-} // namespace
-
-void AudioEngineImpl::feed(StreamCtx& s, const float* samples, size_t n) {
+void AudioEngine::Impl::feed(StreamCtx& s, const float* samples, size_t n) {
     if (n == 0) return;
     atomicMax(s.peak, rms(samples, n));
 
@@ -138,7 +137,7 @@ void AudioEngineImpl::feed(StreamCtx& s, const float* samples, size_t n) {
     while (s.chunk.size() - consumed >= kChunkFrames) {
         const float* p = s.chunk.data() + consumed;
         QByteArray bytes(reinterpret_cast<const char*>(p), qsizetype(kChunkFrames * sizeof(float)));
-        if (emitPcm) emitPcm(s.index, std::move(bytes), double(s.framesEmitted) / double(kRate));
+        emit q->pcmReady(s.index, std::move(bytes), double(s.framesEmitted) / double(kRate));
         s.framesEmitted += kChunkFrames;
         consumed += kChunkFrames;
     }
@@ -147,7 +146,7 @@ void AudioEngineImpl::feed(StreamCtx& s, const float* samples, size_t n) {
 
 // Interleaves both queues into the stereo file (L=mic, R=system). Streams are aligned by
 // sample count; whichever side lags by more than kMaxSkewFrames is padded with silence.
-void AudioEngineImpl::pump(bool flushAll) {
+void AudioEngine::Impl::pump(bool flushAll) {
     std::vector<float> interleaved;
     {
         std::lock_guard<std::mutex> lock(encMutex);
@@ -178,13 +177,14 @@ void AudioEngineImpl::pump(bool flushAll) {
     std::lock_guard<std::mutex> lock(encMutex);
     if (enc && frames > 0) {
         const int rc = ope_encoder_write_float(enc, interleaved.data(), frames);
-        if (rc != OPE_OK && emitError) {
-            emitError(QStringLiteral("Opus encode failed: %1").arg(QString::fromUtf8(ope_strerror(rc))));
+        if (rc != OPE_OK) {
+            emit q->error(
+                QStringLiteral("Opus encode failed: %1").arg(QString::fromUtf8(ope_strerror(rc))));
         }
     }
 }
 
-bool AudioEngineImpl::openEncoder(const QString& path, QString* err) {
+bool AudioEngine::Impl::openEncoder(const QString& path, QString* err) {
     QDir().mkpath(QFileInfo(path).absolutePath());
     OggOpusComments* comments = ope_comments_create();
     if (!comments) {
@@ -206,7 +206,7 @@ bool AudioEngineImpl::openEncoder(const QString& path, QString* err) {
     return true;
 }
 
-void AudioEngineImpl::closeEncoder() {
+void AudioEngine::Impl::closeEncoder() {
     OggOpusEnc* e = nullptr;
     {
         std::lock_guard<std::mutex> lock(encMutex);
@@ -220,7 +220,7 @@ void AudioEngineImpl::closeEncoder() {
     ope_encoder_destroy(e);
 }
 
-void AudioEngineImpl::teardownPipeWire() {
+void AudioEngine::Impl::teardownPipeWire() {
     if (loop) pw_thread_loop_stop(loop);
     for (auto& s : streams) {
         if (s.stream) {
@@ -237,85 +237,41 @@ void AudioEngineImpl::teardownPipeWire() {
 
 // ---------------------------------------------------------------------------
 
-namespace {
-
-std::map<const AudioEngine*, AudioEngineImpl*>& registry() {
-    static std::map<const AudioEngine*, AudioEngineImpl*> map;
-    return map;
-}
-
-std::mutex& registryMutex() {
-    static std::mutex m;
-    return m;
-}
-
-AudioEngineImpl* impl(const AudioEngine* q) {
-    std::lock_guard<std::mutex> lock(registryMutex());
-    auto it = registry().find(q);
-    return it == registry().end() ? nullptr : it->second;
-}
-
-} // namespace
-
-AudioEngine::AudioEngine(QObject* parent) : QObject(parent) {
-    auto* d = new AudioEngineImpl;
-    d->emitPcm = [this](int stream, QByteArray bytes, double t0) {
-        emit pcmReady(stream, std::move(bytes), t0);
-    };
-    d->emitError = [this](const QString& message) { emit error(message); };
-    d->emitRecording = [this](bool on) { emit recordingChanged(on); };
-    d->emitLevels = [this] { emit levelsChanged(); };
-
+AudioEngine::AudioEngine(QObject* parent) : QObject(parent), d(std::make_unique<Impl>(this)) {
     d->levelTimer = new QTimer(this);
     d->levelTimer->setInterval(kLevelIntervalMs);
-    connect(d->levelTimer, &QTimer::timeout, this, [d] {
-        for (auto& s : d->streams) s.level.store(s.peak.exchange(0.0f, std::memory_order_relaxed),
-                                                 std::memory_order_relaxed);
-        d->pump(false);
-        if (d->emitLevels) d->emitLevels();
+    Impl* impl = d.get();
+    connect(d->levelTimer, &QTimer::timeout, this, [this, impl] {
+        for (auto& s : impl->streams)
+            s.level.store(s.peak.exchange(0.0f, std::memory_order_relaxed),
+                          std::memory_order_relaxed);
+        impl->pump(false);
+        emit levelsChanged();
     });
 
     for (int i = 0; i < 2; ++i) {
-        d->streams[i].d = d;
+        d->streams[i].d = impl;
         d->streams[i].index = i;
     }
-
-    std::lock_guard<std::mutex> lock(registryMutex());
-    registry()[this] = d;
 }
 
 AudioEngine::~AudioEngine() {
     stop();
-    AudioEngineImpl* d = nullptr;
-    {
-        std::lock_guard<std::mutex> lock(registryMutex());
-        auto it = registry().find(this);
-        if (it != registry().end()) {
-            d = it->second;
-            registry().erase(it);
-        }
-    }
-    delete d;
 }
 
 bool AudioEngine::isRecording() const {
-    auto* d = impl(this);
-    return d && d->recording;
+    return d->recording;
 }
 
 float AudioEngine::micLevel() const {
-    auto* d = impl(this);
-    return d ? d->streams[0].level.load(std::memory_order_relaxed) : 0.0f;
+    return d->streams[0].level.load(std::memory_order_relaxed);
 }
 
 float AudioEngine::systemLevel() const {
-    auto* d = impl(this);
-    return d ? d->streams[1].level.load(std::memory_order_relaxed) : 0.0f;
+    return d->streams[1].level.load(std::memory_order_relaxed);
 }
 
 void AudioEngine::start(const QString& audioFilePath) {
-    auto* d = impl(this);
-    if (!d) return;
     if (d->recording) {
         qWarning("AudioEngine::start() called while already recording - ignored");
         return;
@@ -369,7 +325,7 @@ void AudioEngine::start(const QString& audioFilePath) {
 
         d->streams[i].stream = pw_stream_new_simple(pw_thread_loop_get_loop(d->loop),
                                                     sink ? "gromarch system audio" : "gromarch microphone",
-                                                    props, &kStreamEvents, &d->streams[i]);
+                                                    props, &Impl::kStreamEvents, &d->streams[i]);
         if (!d->streams[i].stream) {
             d->teardownPipeWire();
             d->closeEncoder();
@@ -414,8 +370,7 @@ void AudioEngine::start(const QString& audioFilePath) {
 }
 
 void AudioEngine::stop() {
-    auto* d = impl(this);
-    if (!d || !d->recording) return;
+    if (!d->recording) return;
 
     d->recording = false;
     d->levelTimer->stop();

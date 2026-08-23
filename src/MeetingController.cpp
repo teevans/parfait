@@ -2,7 +2,6 @@
 
 #include <QDateTime>
 #include <QDir>
-#include <QHash>
 #include <QTimer>
 
 #include "audio/AudioEngine.h"
@@ -15,9 +14,9 @@ namespace {
 
 const char* kUntitled = "Untitled meeting";
 
-// The header is a frozen contract with no data members, so per-instance state
-// lives in this side table, torn down when the controller is destroyed.
-struct Priv {
+} // namespace
+
+struct MeetingController::Impl {
     AudioEngine* audio = nullptr;
     TranscribeEngine* transcribe = nullptr;
     EnhanceService* enhance = nullptr;
@@ -33,35 +32,18 @@ struct Priv {
     QTimer* tick = nullptr;
 };
 
-QHash<const MeetingController*, Priv*>& registry() {
-    static QHash<const MeetingController*, Priv*> map;
-    return map;
-}
-
-Priv* priv(const MeetingController* self) {
-    return registry().value(self);
-}
-
-} // namespace
-
 MeetingController::MeetingController(AudioEngine* audio, TranscribeEngine* transcribe,
                                      EnhanceService* enhance, Library* library,
                                      QObject* parent)
-    : QObject(parent) {
-    auto* d = new Priv;
+    : QObject(parent), d(std::make_unique<Impl>()) {
     d->audio = audio;
     d->transcribe = transcribe;
     d->enhance = enhance;
     d->library = library;
-    registry().insert(this, d);
 
     d->tick = new QTimer(this);
     d->tick->setInterval(1000);
     connect(d->tick, &QTimer::timeout, this, &MeetingController::elapsedChanged);
-
-    connect(this, &QObject::destroyed, [](QObject* obj) {
-        delete registry().take(static_cast<MeetingController*>(obj));
-    });
 
     // --- audio -> transcriber -------------------------------------------------
     if (audio && transcribe) {
@@ -72,8 +54,6 @@ MeetingController::MeetingController(AudioEngine* audio, TranscribeEngine* trans
     if (transcribe) {
         connect(transcribe, &TranscribeEngine::segmentReady, this,
                 [this](gromarch::TranscriptSegment segment) {
-                    Priv* d = priv(this);
-                    if (!d) return;
                     if (segment.meetingId < 0) segment.meetingId = d->currentId;
                     emit liveSegment(segment);
                     if (segment.final && d->library && segment.meetingId >= 0 &&
@@ -91,14 +71,12 @@ MeetingController::MeetingController(AudioEngine* audio, TranscribeEngine* trans
     // --- enhance --------------------------------------------------------------
     if (enhance) {
         connect(enhance, &EnhanceService::enhanceDelta, this, [this](const QString& delta) {
-            Priv* d = priv(this);
-            if (!d || d->enhanceId < 0) return;
+            if (d->enhanceId < 0) return;
             d->enhanceBuffer += delta;
             emit enhanceDelta(d->enhanceId, delta);
         });
         connect(enhance, &EnhanceService::enhanceFinished, this, [this](const QString& full) {
-            Priv* d = priv(this);
-            if (!d || d->enhanceId < 0) return;
+            if (d->enhanceId < 0) return;
             const qint64 id = d->enhanceId;
             d->enhanceId = -1;
             const QString text = full.isEmpty() ? d->enhanceBuffer : full;
@@ -115,8 +93,7 @@ MeetingController::MeetingController(AudioEngine* audio, TranscribeEngine* trans
             emit enhanceFinished(id);
         });
         connect(enhance, &EnhanceService::titleReady, this, [this](const QString& title) {
-            Priv* d = priv(this);
-            if (!d || d->titleId < 0) return;
+            if (d->titleId < 0) return;
             const qint64 id = d->titleId;
             d->titleId = -1;
             const QString clean = title.trimmed();
@@ -128,26 +105,23 @@ MeetingController::MeetingController(AudioEngine* audio, TranscribeEngine* trans
     }
 }
 
+MeetingController::~MeetingController() = default;
+
 bool MeetingController::isRecording() const {
-    Priv* d = priv(this);
-    return d && d->recording;
+    return d->recording;
 }
 
 qint64 MeetingController::currentMeetingId() const {
-    Priv* d = priv(this);
-    return d ? d->currentId : -1;
+    return d->currentId;
 }
 
 double MeetingController::elapsedSeconds() const {
-    Priv* d = priv(this);
-    if (!d) return 0.0;
     if (!d->recording || !d->startedAt.isValid()) return d->lastElapsed;
     return d->startedAt.msecsTo(QDateTime::currentDateTime()) / 1000.0;
 }
 
 qint64 MeetingController::startMeeting(const QString& title) {
-    Priv* d = priv(this);
-    if (!d || !d->library || d->recording) return d ? d->currentId : -1;
+    if (!d->library || d->recording) return d->currentId;
 
     Meeting m;
     m.title = title.trimmed().isEmpty() ? QLatin1String(kUntitled) : title.trimmed();
@@ -183,8 +157,7 @@ qint64 MeetingController::startMeeting(const QString& title) {
 }
 
 void MeetingController::stopMeeting() {
-    Priv* d = priv(this);
-    if (!d || !d->recording) return;
+    if (!d->recording) return;
 
     const qint64 id = d->currentId;
     d->lastElapsed = elapsedSeconds();
@@ -218,8 +191,7 @@ void MeetingController::stopMeeting() {
 }
 
 void MeetingController::saveCues(qint64 meetingId, const QString& cuesMd) {
-    Priv* d = priv(this);
-    if (!d || !d->library || meetingId < 0) return;
+    if (!d->library || meetingId < 0) return;
     Meeting m = d->library->meeting(meetingId);
     if (m.id < 0 || m.notesMd == cuesMd) return;
     m.notesMd = cuesMd;
@@ -227,8 +199,7 @@ void MeetingController::saveCues(qint64 meetingId, const QString& cuesMd) {
 }
 
 void MeetingController::enhance(qint64 meetingId, const QString& templateId) {
-    Priv* d = priv(this);
-    if (!d || !d->library || !d->enhance || meetingId < 0) return;
+    if (!d->library || !d->enhance || meetingId < 0) return;
     if (!d->enhance->isConfigured()) {
         emit error(tr("No LLM endpoint configured — set one in Settings."));
         return;
@@ -248,8 +219,7 @@ void MeetingController::enhance(qint64 meetingId, const QString& templateId) {
 }
 
 void MeetingController::setTitle(qint64 meetingId, const QString& title) {
-    Priv* d = priv(this);
-    if (!d || !d->library || meetingId < 0) return;
+    if (!d->library || meetingId < 0) return;
     const QString clean = title.trimmed().isEmpty() ? QLatin1String(kUntitled) : title.trimmed();
     Meeting m = d->library->meeting(meetingId);
     if (m.id < 0 || m.title == clean) return;

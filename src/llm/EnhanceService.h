@@ -1,6 +1,7 @@
 #pragma once
 #include <QObject>
 #include <QString>
+#include <memory>
 
 namespace gromarch {
 
@@ -34,6 +35,10 @@ signals:
     void enhanceFinished(const QString& fullMarkdown);
     void titleReady(const QString& title);
     void error(const QString& message);
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> d;
 };
 
 } // namespace gromarch

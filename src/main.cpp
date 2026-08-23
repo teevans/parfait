@@ -11,6 +11,7 @@
 #include "transcribe/TranscribeEngine.h"
 #include "llm/EnhanceService.h"
 #include "calendar/CalendarService.h"
+#include "models/ModelDownloader.h"
 #include "store/Library.h"
 #include "theme/ThemeService.h"
 #include "MeetingController.h"
@@ -55,8 +56,16 @@ int main(int argc, char* argv[]) {
     TranscribeEngine transcribe;
     EnhanceService enhance;
     CalendarService calendar;
+    ModelDownloader models;
     MeetingController controller(&audio, &transcribe, &enhance, &library);
     MeetingListModel meetings(&library);
+
+    // Model picked in Settings wins over TranscribeEngine's built-in default,
+    // and switching it in the UI applies without a restart.
+    if (!models.activeModelPath().isEmpty())
+        transcribe.setModelPath(models.activeModelPath());
+    QObject::connect(&models, &ModelDownloader::activeModelPathChanged,
+                     &transcribe, &TranscribeEngine::setModelPath);
 
     // Local socket so `gromarch --retint` (from the Omarchy theme-set hook) works.
     QLocalServer::removeServer(kSocketName);
@@ -79,6 +88,7 @@ int main(int argc, char* argv[]) {
     engine.rootContext()->setContextProperty("Transcriber", &transcribe);
     engine.rootContext()->setContextProperty("Enhancer", &enhance);
     engine.rootContext()->setContextProperty("Calendar", &calendar);
+    engine.rootContext()->setContextProperty("Models", &models);
     engine.load(QUrl(QStringLiteral("qrc:/Gromarch/Main.qml")));
     if (engine.rootObjects().isEmpty()) return 1;
     return app.exec();

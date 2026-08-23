@@ -27,20 +27,6 @@ constexpr int kRefreshMs = 5 * 60 * 1000;
 constexpr int kImminentCheckMs = 30 * 1000;
 constexpr int kWindowDays = 7;
 
-// CalendarService.h is a frozen interface with no private data; per-instance state
-// lives in this side table keyed by the object pointer.
-struct CalState {
-    QNetworkAccessManager* nam = nullptr;
-    QList<CalendarEvent> events;
-    QList<CalendarEvent> incoming;   // accumulated across the replies of one refresh
-    QSet<QString> firedUids;
-    int pending = 0;
-};
-
-QHash<const CalendarService*, CalState*> g_state;
-
-CalState* state(const CalendarService* self) { return g_state.value(self, nullptr); }
-
 QSettings makeSettings() { return QSettings("gromarch", "gromarch"); }
 
 QString setting(const char* key) {
@@ -221,10 +207,17 @@ bool isMeetingEvent(const CalendarEvent& e) {
 
 } // namespace
 
-CalendarService::CalendarService(QObject* parent) : QObject(parent) {
-    auto* s = new CalState;
-    s->nam = new QNetworkAccessManager(this);
-    g_state.insert(this, s);
+struct CalendarService::Impl {
+    QNetworkAccessManager* nam = nullptr;
+    QList<CalendarEvent> events;
+    QList<CalendarEvent> incoming;   // accumulated across the replies of one refresh
+    QSet<QString> firedUids;
+    int pending = 0;
+};
+
+CalendarService::CalendarService(QObject* parent)
+    : QObject(parent), d(std::make_unique<Impl>()) {
+    d->nam = new QNetworkAccessManager(this);
 
     auto* poll = new QTimer(this);
     poll->setInterval(kRefreshMs);
@@ -234,8 +227,7 @@ CalendarService::CalendarService(QObject* parent) : QObject(parent) {
     auto* imminent = new QTimer(this);
     imminent->setInterval(kImminentCheckMs);
     connect(imminent, &QTimer::timeout, this, [this] {
-        CalState* st = state(this);
-        if (!st) return;
+        Impl* st = d.get();
         const QDateTime now = QDateTime::currentDateTime();
         for (const CalendarEvent& e : std::as_const(st->events)) {
             if (!e.start.isValid() || st->firedUids.contains(e.uid)) continue;
@@ -251,9 +243,7 @@ CalendarService::CalendarService(QObject* parent) : QObject(parent) {
     if (isConfigured()) QTimer::singleShot(0, this, &CalendarService::refresh);
 }
 
-CalendarService::~CalendarService() {
-    delete g_state.take(this);
-}
+CalendarService::~CalendarService() = default;
 
 bool CalendarService::isConfigured() const {
     return !setting("calendar/icsUrl").isEmpty() || !setting("calendar/caldavUrl").isEmpty();
@@ -261,8 +251,7 @@ bool CalendarService::isConfigured() const {
 
 QList<CalendarEvent> CalendarService::todaysEvents() const {
     QList<CalendarEvent> out;
-    CalState* s = state(this);
-    if (!s) return out;
+    Impl* s = d.get();
     const QDate today = QDate::currentDate();
     for (const CalendarEvent& e : std::as_const(s->events))
         if (e.start.isValid() && e.start.toLocalTime().date() == today) out.append(e);
@@ -272,8 +261,7 @@ QList<CalendarEvent> CalendarService::todaysEvents() const {
 }
 
 void CalendarService::refresh() {
-    CalState* s = state(this);
-    if (!s) return;
+    Impl* s = d.get();
     if (s->pending > 0) return;   // a refresh is already in flight
 
     const QString icsUrl = setting("calendar/icsUrl");

@@ -1,6 +1,7 @@
 #pragma once
 #include <QObject>
 #include <QString>
+#include <memory>
 #include "Types.h"
 
 namespace gromarch {
@@ -22,6 +23,7 @@ public:
     MeetingController(AudioEngine* audio, TranscribeEngine* transcribe,
                       EnhanceService* enhance, Library* library,
                       QObject* parent = nullptr);
+    ~MeetingController() override;
 
     bool isRecording() const;
     qint64 currentMeetingId() const;
@@ -42,6 +44,10 @@ signals:
     void enhanceDelta(qint64 meetingId, const QString& textDelta);
     void enhanceFinished(qint64 meetingId);
     void error(const QString& message);
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> d;
 };
 
 } // namespace gromarch
