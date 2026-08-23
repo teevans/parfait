@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Drives gromarch-e2e through N ~30 s "meeting increments": a Them track plays into the
+# Drives parfait-e2e through N ~30 s "meeting increments": a Them track plays into the
 # meeting sink while short Me interjections play into the virtual mic.
 set -euo pipefail
 
@@ -178,7 +178,7 @@ for (( i=0; i<INCREMENTS; i++ )); do
     echo "=== increment $i ==="
     echo "them chunk: $chunk"
 
-    gromarch-e2e --model "$MODEL" --seconds "$CAPTURE_SEC" \
+    parfait-e2e --model "$MODEL" --seconds "$CAPTURE_SEC" \
         --audio "$OUT/inc$i.ogg" --out "$OUT/inc$i.txt" >"$WORK/inc$i.stdout" 2>"$WORK/inc$i.stderr" &
     e2e_pid=$!
 

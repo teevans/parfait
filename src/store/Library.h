@@ -4,10 +4,10 @@
 #include <memory>
 #include "Types.h"
 
-namespace gromarch {
+namespace parfait {
 
 // SQLite-backed meeting store with FTS5 search over segments + notes.
-// DB: ~/.local/share/gromarch/gromarch.db (WAL). Note files are also written
+// DB: ~/.local/share/parfait/parfait.db (WAL). Note files are also written
 // to ~/Meetings/<yyyy-mm-dd> <title>/note.md on save — files are the source of
 // truth for notes, the DB is the index.
 class Library : public QObject {
@@ -38,4 +38,4 @@ private:
     std::unique_ptr<Impl> d;
 };
 
-} // namespace gromarch
+} // namespace parfait

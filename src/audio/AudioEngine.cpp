@@ -21,7 +21,7 @@
 
 #include <opusenc.h>
 
-namespace gromarch {
+namespace parfait {
 namespace {
 
 constexpr uint32_t kRate = 16000;
@@ -191,7 +191,7 @@ bool AudioEngine::Impl::openEncoder(const QString& path, QString* err) {
         *err = QStringLiteral("Could not allocate Opus comments");
         return false;
     }
-    ope_comments_add(comments, "ENCODER", "gromarch");
+    ope_comments_add(comments, "ENCODER", "parfait");
     ope_comments_add(comments, "DESCRIPTION", "L=microphone R=system audio");
 
     int rc = OPE_OK;
@@ -299,7 +299,7 @@ void AudioEngine::start(const QString& audioFilePath) {
 
     std::call_once(g_pwInit, [] { pw_init(nullptr, nullptr); });
 
-    d->loop = pw_thread_loop_new("gromarch-audio", nullptr);
+    d->loop = pw_thread_loop_new("parfait-audio", nullptr);
     if (!d->loop) {
         d->closeEncoder();
         emit error(QStringLiteral("Could not create the PipeWire thread loop"));
@@ -312,7 +312,7 @@ void AudioEngine::start(const QString& audioFilePath) {
             PW_KEY_MEDIA_TYPE, "Audio",
             PW_KEY_MEDIA_CATEGORY, "Capture",
             PW_KEY_MEDIA_ROLE, "Communication",
-            PW_KEY_NODE_NAME, sink ? "gromarch-system" : "gromarch-mic",
+            PW_KEY_NODE_NAME, sink ? "parfait-system" : "parfait-mic",
             nullptr);
         if (!props) {
             d->teardownPipeWire();
@@ -324,7 +324,7 @@ void AudioEngine::start(const QString& audioFilePath) {
         if (sink) pw_properties_set(props, PW_KEY_STREAM_CAPTURE_SINK, "true");
 
         d->streams[i].stream = pw_stream_new_simple(pw_thread_loop_get_loop(d->loop),
-                                                    sink ? "gromarch system audio" : "gromarch microphone",
+                                                    sink ? "parfait system audio" : "parfait microphone",
                                                     props, &Impl::kStreamEvents, &d->streams[i]);
         if (!d->streams[i].stream) {
             d->teardownPipeWire();
@@ -395,4 +395,4 @@ void AudioEngine::stop() {
     emit recordingChanged(false);
 }
 
-} // namespace gromarch
+} // namespace parfait

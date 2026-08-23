@@ -23,7 +23,7 @@
 // signals are consumed directly by QML. Worker threads should queue calls instead
 // (e.g. QMetaObject::invokeMethod on the Library's thread).
 
-namespace gromarch {
+namespace parfait {
 namespace {
 
 // Bumped whenever the on-disk schema changes; see the migration ladder in open().
@@ -118,7 +118,7 @@ struct Library::Impl {
 };
 
 Library::Library(QObject* parent) : QObject(parent), d(std::make_unique<Impl>()) {
-    d->connName = QString("gromarch_library_%1").arg(reinterpret_cast<quintptr>(this));
+    d->connName = QString("parfait_library_%1").arg(reinterpret_cast<quintptr>(this));
 }
 
 Library::~Library() {
@@ -137,10 +137,10 @@ bool Library::open() {
     if (s->opened) return true;
 
     QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    if (dir.isEmpty()) dir = QDir::homePath() + "/.local/share/gromarch";
+    if (dir.isEmpty()) dir = QDir::homePath() + "/.local/share/parfait";
     if (!QDir().mkpath(dir)) {
         const QString msg = QString("Cannot create data directory %1").arg(dir);
-        qWarning("gromarch: %s", qPrintable(msg));
+        qWarning("parfait: %s", qPrintable(msg));
         emit error(msg);
         return false;
     }
@@ -150,14 +150,14 @@ bool Library::open() {
                           : QSqlDatabase::addDatabase("QSQLITE", s->connName);
     if (!db.isValid()) {
         const QString msg = QStringLiteral("SQLite driver (QSQLITE) is not available");
-        qWarning("gromarch: %s", qPrintable(msg));
+        qWarning("parfait: %s", qPrintable(msg));
         emit error(msg);
         return false;
     }
-    db.setDatabaseName(dir + "/gromarch.db");
+    db.setDatabaseName(dir + "/parfait.db");
     if (!db.open()) {
-        const QString msg = QString("Cannot open %1/gromarch.db: %2").arg(dir, db.lastError().text());
-        qWarning("gromarch: %s", qPrintable(msg));
+        const QString msg = QString("Cannot open %1/parfait.db: %2").arg(dir, db.lastError().text());
+        qWarning("parfait: %s", qPrintable(msg));
         emit error(msg);
         return false;
     }
@@ -195,7 +195,7 @@ bool Library::open() {
     for (const char* sql : schema) {
         if (!q.exec(QString::fromLatin1(sql))) {
             const QString msg = QString("Schema creation failed: %1").arg(q.lastError().text());
-            qWarning("gromarch: %s", qPrintable(msg));
+            qWarning("parfait: %s", qPrintable(msg));
             emit error(msg);
             db.close();
             return false;
@@ -223,7 +223,7 @@ bool Library::open() {
         if (!mig.exec("ALTER TABLE segments ADD COLUMN speaker INTEGER DEFAULT -1")) {
             const QString msg = QString("Schema migration to v2 failed: %1")
                                     .arg(mig.lastError().text());
-            qWarning("gromarch: %s", qPrintable(msg));
+            qWarning("parfait: %s", qPrintable(msg));
             emit error(msg);
             db.close();
             return false;
@@ -246,7 +246,7 @@ bool Library::open() {
         s->fts = FtsMode::Standard;
     } else {
         s->fts = FtsMode::None;
-        qWarning("gromarch: FTS5 unavailable (%s) — falling back to LIKE search",
+        qWarning("parfait: FTS5 unavailable (%s) — falling back to LIKE search",
                  qPrintable(q.lastError().text()));
     }
 
@@ -290,7 +290,7 @@ void Library::Impl::reindexMeeting(qint64 id) {
     del.prepare("DELETE FROM search_idx WHERE rowid=?");
     del.addBindValue(id);
     if (!del.exec())
-        qWarning("gromarch: search index delete failed: %s", qPrintable(del.lastError().text()));
+        qWarning("parfait: search index delete failed: %s", qPrintable(del.lastError().text()));
 
     QSqlQuery ins(db);
     ins.prepare("INSERT INTO search_idx(rowid, title, notes, transcript) VALUES(?,?,?,?)");
@@ -299,7 +299,7 @@ void Library::Impl::reindexMeeting(qint64 id) {
     ins.addBindValue(notes);
     ins.addBindValue(transcript);
     if (!ins.exec())
-        qWarning("gromarch: search index insert failed: %s", qPrintable(ins.lastError().text()));
+        qWarning("parfait: search index insert failed: %s", qPrintable(ins.lastError().text()));
 
     s->dirty.remove(id);
 }
@@ -335,7 +335,7 @@ qint64 Library::createMeeting(const Meeting& m) {
     q.addBindValue(m.state.isEmpty() ? QStringLiteral("recording") : m.state);
     if (!q.exec()) {
         const QString msg = QString("createMeeting failed: %1").arg(q.lastError().text());
-        qWarning("gromarch: %s", qPrintable(msg));
+        qWarning("parfait: %s", qPrintable(msg));
         emit error(msg);
         return -1;
     }
@@ -373,7 +373,7 @@ void Library::updateMeeting(const Meeting& m) {
     q.addBindValue(m.id);
     if (!q.exec()) {
         const QString msg = QString("updateMeeting failed: %1").arg(q.lastError().text());
-        qWarning("gromarch: %s", qPrintable(msg));
+        qWarning("parfait: %s", qPrintable(msg));
         emit error(msg);
         return;
     }
@@ -390,7 +390,7 @@ Meeting Library::meeting(qint64 id) const {
     q.prepare("SELECT * FROM meetings WHERE id=?");
     q.addBindValue(id);
     if (!q.exec()) {
-        qWarning("gromarch: meeting(%lld) failed: %s", static_cast<long long>(id),
+        qWarning("parfait: meeting(%lld) failed: %s", static_cast<long long>(id),
                  qPrintable(q.lastError().text()));
         emit const_cast<Library*>(this)->error(q.lastError().text());
         return m;
@@ -406,7 +406,7 @@ QList<Meeting> Library::allMeetings() const {
     QSqlDatabase db = QSqlDatabase::database(s->connName, false);
     QSqlQuery q(db);
     if (!q.exec("SELECT * FROM meetings ORDER BY started_at DESC, id DESC")) {
-        qWarning("gromarch: allMeetings failed: %s", qPrintable(q.lastError().text()));
+        qWarning("parfait: allMeetings failed: %s", qPrintable(q.lastError().text()));
         emit const_cast<Library*>(this)->error(q.lastError().text());
         return out;
     }
@@ -433,7 +433,7 @@ void Library::appendSegment(const TranscriptSegment& seg) {
     q.addBindValue(seg.speaker);
     if (!q.exec()) {
         const QString msg = QString("appendSegment failed: %1").arg(q.lastError().text());
-        qWarning("gromarch: %s", qPrintable(msg));
+        qWarning("parfait: %s", qPrintable(msg));
         emit error(msg);
         return;
     }
@@ -450,7 +450,7 @@ QList<TranscriptSegment> Library::segments(qint64 meetingId) const {
               " WHERE meeting_id=? ORDER BY t0 ASC, id ASC");
     q.addBindValue(meetingId);
     if (!q.exec()) {
-        qWarning("gromarch: segments failed: %s", qPrintable(q.lastError().text()));
+        qWarning("parfait: segments failed: %s", qPrintable(q.lastError().text()));
         emit const_cast<Library*>(this)->error(q.lastError().text());
         return out;
     }
@@ -510,7 +510,7 @@ QList<Meeting> Library::search(const QString& query) const {
             while (q.next()) out.append(meetingFromRecord(q.record()));
             return out;
         }
-        qWarning("gromarch: FTS search failed (%s) — using LIKE fallback",
+        qWarning("parfait: FTS search failed (%s) — using LIKE fallback",
                  qPrintable(q.lastError().text()));
     }
 
@@ -522,7 +522,7 @@ QList<Meeting> Library::search(const QString& query) const {
     q.addBindValue(like);
     q.addBindValue(like);
     if (!q.exec()) {
-        qWarning("gromarch: search failed: %s", qPrintable(q.lastError().text()));
+        qWarning("parfait: search failed: %s", qPrintable(q.lastError().text()));
         emit const_cast<Library*>(this)->error(q.lastError().text());
         return out;
     }
@@ -536,7 +536,7 @@ QString Library::meetingDir(const Meeting& m) const {
     const QString path = QDir::homePath() + "/Meetings/" + name;
     if (!QDir().mkpath(path)) {
         const QString msg = QString("Cannot create meeting directory %1").arg(path);
-        qWarning("gromarch: %s", qPrintable(msg));
+        qWarning("parfait: %s", qPrintable(msg));
         emit const_cast<Library*>(this)->error(msg);
     }
     return path;
@@ -548,7 +548,7 @@ void Library::writeNoteFile(const Meeting& m) {
     QSaveFile f(path);
     if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) {
         const QString msg = QString("Cannot write %1: %2").arg(path, f.errorString());
-        qWarning("gromarch: %s", qPrintable(msg));
+        qWarning("parfait: %s", qPrintable(msg));
         emit error(msg);
         return;
     }
@@ -556,9 +556,9 @@ void Library::writeNoteFile(const Meeting& m) {
     if (!content.endsWith('\n')) f.write("\n");
     if (!f.commit()) {
         const QString msg = QString("Cannot commit %1: %2").arg(path, f.errorString());
-        qWarning("gromarch: %s", qPrintable(msg));
+        qWarning("parfait: %s", qPrintable(msg));
         emit error(msg);
     }
 }
 
-} // namespace gromarch
+} // namespace parfait

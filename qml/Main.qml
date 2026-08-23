@@ -15,7 +15,7 @@ ApplicationWindow {
     height: 800
     minimumWidth: 780
     minimumHeight: 480
-    title: "Gromarch"
+    title: "Parfait"
     color: Theme.background
 
     Behavior on color { ColorAnimation { duration: 200 } }

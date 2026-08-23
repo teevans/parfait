@@ -4,7 +4,7 @@
 #include <memory>
 #include "Types.h"
 
-namespace gromarch {
+namespace parfait {
 
 class AudioEngine;
 class TranscribeEngine;
@@ -40,7 +40,7 @@ signals:
     void stateChanged();
     void elapsedChanged();
     // Forwarded live segments (partials included) for the transcript view.
-    void liveSegment(gromarch::TranscriptSegment segment);
+    void liveSegment(parfait::TranscriptSegment segment);
     void enhanceDelta(qint64 meetingId, const QString& textDelta);
     void enhanceFinished(qint64 meetingId);
     void error(const QString& message);
@@ -50,4 +50,4 @@ private:
     std::unique_ptr<Impl> d;
 };
 
-} // namespace gromarch
+} // namespace parfait

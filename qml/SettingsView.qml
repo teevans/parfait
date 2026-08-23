@@ -184,7 +184,7 @@ Item {
 
                 Label {
                     Layout.fillWidth: true
-                    text: "Downloaded to ~/.local/share/gromarch/models"
+                    text: "Downloaded to ~/.local/share/parfait/models"
                     color: Theme.mutedForeground
                     font.family: Theme.uiFont
                     font.pixelSize: 11

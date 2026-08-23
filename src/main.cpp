@@ -17,14 +17,14 @@
 #include "MeetingController.h"
 #include "MeetingListModel.h"
 
-using namespace gromarch;
+using namespace parfait;
 
-static const QString kSocketName = QStringLiteral("gromarch-ipc");
+static const QString kSocketName = QStringLiteral("parfait-ipc");
 
 int main(int argc, char* argv[]) {
     QGuiApplication app(argc, argv);
-    app.setApplicationName("gromarch");
-    app.setOrganizationName("gromarch");
+    app.setApplicationName("parfait");
+    app.setOrganizationName("parfait");
     app.setApplicationVersion("0.1.0");
     QQuickStyle::setStyle("Basic");
 
@@ -67,7 +67,7 @@ int main(int argc, char* argv[]) {
     QObject::connect(&models, &ModelDownloader::activeModelPathChanged,
                      &transcribe, &TranscribeEngine::setModelPath);
 
-    // Local socket so `gromarch --retint` (from the Omarchy theme-set hook) works.
+    // Local socket so `parfait --retint` (from the Omarchy theme-set hook) works.
     QLocalServer::removeServer(kSocketName);
     QLocalServer ipc;
     ipc.listen(kSocketName);
@@ -89,7 +89,7 @@ int main(int argc, char* argv[]) {
     engine.rootContext()->setContextProperty("Enhancer", &enhance);
     engine.rootContext()->setContextProperty("Calendar", &calendar);
     engine.rootContext()->setContextProperty("Models", &models);
-    engine.load(QUrl(QStringLiteral("qrc:/Gromarch/Main.qml")));
+    engine.load(QUrl(QStringLiteral("qrc:/Parfait/Main.qml")));
     if (engine.rootObjects().isEmpty()) return 1;
     return app.exec();
 }

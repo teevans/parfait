@@ -3,7 +3,7 @@
 #include <QString>
 #include <memory>
 
-namespace gromarch {
+namespace parfait {
 
 // Client for any OpenAI-compatible /chat/completions endpoint (streaming SSE).
 // Configured via Settings (base URL, API key, model). One job at a time.
@@ -41,4 +41,4 @@ private:
     std::unique_ptr<Impl> d;
 };
 
-} // namespace gromarch
+} // namespace parfait

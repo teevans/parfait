@@ -52,7 +52,7 @@ Item {
                 }
 
                 Label {
-                    text: "gromarch"
+                    text: "parfait"
                     color: Theme.foreground
                     font.family: Theme.monoFont
                     font.pixelSize: 13

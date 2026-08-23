@@ -35,7 +35,7 @@ if ! pactl info >/dev/null 2>&1; then
     exit 1
 fi
 
-# "Them" = whatever is played into the meeting sink; gromarch taps its monitor.
+# "Them" = whatever is played into the meeting sink; parfait taps its monitor.
 pactl load-module module-null-sink \
     sink_name=meeting \
     sink_properties=device.description=Meeting >/dev/null

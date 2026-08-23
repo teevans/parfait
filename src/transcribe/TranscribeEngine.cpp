@@ -17,11 +17,11 @@
 #include <thread>
 #include <vector>
 
-#ifdef GROMARCH_WITH_WHISPER
+#ifdef PARFAIT_WITH_WHISPER
 #include <whisper.h>
 #endif
 
-namespace gromarch {
+namespace parfait {
 namespace {
 
 constexpr int    kSampleRate      = 16000;
@@ -120,7 +120,7 @@ bool modelSupportsTdrz(const QString& path) {
 
 QString defaultModelPath() {
     const QString base = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
-    return QDir(base).filePath(QStringLiteral("gromarch/models/ggml-base.en.bin"));
+    return QDir(base).filePath(QStringLiteral("parfait/models/ggml-base.en.bin"));
 }
 
 // whisper emits bracketed markers for music/silence; they are noise in a transcript.
@@ -168,7 +168,7 @@ struct TranscribeEngine::Impl {
     std::atomic<bool> tdrz{false};       // loaded model supports tinydiarize
     int systemTurn = 0;                  // worker thread only
 
-#ifdef GROMARCH_WITH_WHISPER
+#ifdef PARFAIT_WITH_WHISPER
     std::mutex ctxMutex;
     whisper_context* ctx = nullptr;
     bool loadFailed = false;
@@ -242,7 +242,7 @@ struct TranscribeEngine::Impl {
     // ---- model -------------------------------------------------------------
 
     bool ensureModel() {
-#ifdef GROMARCH_WITH_WHISPER
+#ifdef PARFAIT_WITH_WHISPER
         const QString want = modelPath();
         {
             std::lock_guard<std::mutex> lock(ctxMutex);
@@ -283,7 +283,7 @@ struct TranscribeEngine::Impl {
 
     // Let a new meeting retry a load that previously failed (model since downloaded).
     void clearLoadFailure() {
-#ifdef GROMARCH_WITH_WHISPER
+#ifdef PARFAIT_WITH_WHISPER
         std::lock_guard<std::mutex> lock(ctxMutex);
         loadFailed = false;
 #endif
@@ -291,7 +291,7 @@ struct TranscribeEngine::Impl {
 
     void freeModel() {
         tdrz.store(false);
-#ifdef GROMARCH_WITH_WHISPER
+#ifdef PARFAIT_WITH_WHISPER
         std::lock_guard<std::mutex> lock(ctxMutex);
         if (ctx) whisper_free(ctx);
         ctx = nullptr;
@@ -306,7 +306,7 @@ struct TranscribeEngine::Impl {
     // decoded (no model, empty input, decode failure).
     bool decode(const std::vector<float>& pcm, bool wantTurns, std::vector<DecodedSeg>& out) {
         out.clear();
-#ifdef GROMARCH_WITH_WHISPER
+#ifdef PARFAIT_WITH_WHISPER
         if (pcm.empty()) return false;
         if (!ensureModel()) return false;
 
@@ -666,7 +666,7 @@ void TranscribeEngine::feed(int stream, QByteArray f32Samples, double t0) {
 
     Impl* impl = d.get();
     impl->post([impl, stream, f32Samples, t0, count] {
-#ifdef GROMARCH_WITH_WHISPER
+#ifdef PARFAIT_WITH_WHISPER
         impl->handleAudio(stream, f32Samples, t0);
 #else
         Q_UNUSED(stream);
@@ -679,7 +679,7 @@ void TranscribeEngine::feed(int stream, QByteArray f32Samples, double t0) {
 void TranscribeEngine::finish() {
     Impl* impl = d.get();
     impl->post([impl] {
-#ifdef GROMARCH_WITH_WHISPER
+#ifdef PARFAIT_WITH_WHISPER
         for (int stream = 0; stream < 2; ++stream) {
             StreamState& s = impl->streams[stream];
             if (s.hadSpeech && !s.buf.empty()) impl->emitWindow(stream, true);
@@ -694,4 +694,4 @@ void TranscribeEngine::finish() {
     });
 }
 
-} // namespace gromarch
+} // namespace parfait

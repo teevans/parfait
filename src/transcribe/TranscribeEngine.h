@@ -4,12 +4,12 @@
 #include <memory>
 #include "Types.h"
 
-namespace gromarch {
+namespace parfait {
 
 // Streaming transcription over two PCM streams (mic + system) via whisper.cpp.
 // Windowed decoding with VAD gating; emits partial segments that are replaced
 // until finalized. Runs on an internal worker thread.
-// When built without GROMARCH_WITH_WHISPER, acts as a stub that emits nothing
+// When built without PARFAIT_WITH_WHISPER, acts as a stub that emits nothing
 // and reports ready(false, ...).
 class TranscribeEngine : public QObject {
     Q_OBJECT
@@ -33,7 +33,7 @@ signals:
     void modelPathChanged();
     // Partial segments carry final=false and update the previous partial for
     // that stream; final=true segments are stable and should be persisted.
-    void segmentReady(gromarch::TranscriptSegment segment);
+    void segmentReady(parfait::TranscriptSegment segment);
     void finished();                  // all segments final after finish()
     void error(const QString& message);
 
@@ -42,4 +42,4 @@ private:
     std::unique_ptr<Impl> d;
 };
 
-} // namespace gromarch
+} // namespace parfait

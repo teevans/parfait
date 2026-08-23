@@ -3,7 +3,7 @@
 #include <QDateTime>
 #include "store/Library.h"
 
-namespace gromarch {
+namespace parfait {
 namespace {
 
 QString dayGroup(const QDateTime& when) {
@@ -125,4 +125,4 @@ int MeetingListModel::indexOfId(qint64 id) const {
     return -1;
 }
 
-} // namespace gromarch
+} // namespace parfait

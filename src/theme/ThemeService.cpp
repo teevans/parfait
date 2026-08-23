@@ -13,7 +13,7 @@
 #include <QTextStream>
 #include <QTimer>
 
-namespace gromarch {
+namespace parfait {
 namespace {
 
 struct Palette {
@@ -123,7 +123,7 @@ bool isDark(const QColor& c) {
 
 QString resolveThemePath() {
     const QString env = QProcessEnvironment::systemEnvironment().value(
-        QStringLiteral("GROMARCH_THEME"));
+        QStringLiteral("PARFAIT_THEME"));
     if (!env.isEmpty() && QFileInfo::exists(env)) return env;
 
     const QString home = QDir::homePath();
@@ -318,4 +318,4 @@ QString ThemeService::uiFont() const {
     return d->uiFont;
 }
 
-} // namespace gromarch
+} // namespace parfait

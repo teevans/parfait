@@ -1,5 +1,5 @@
 # Maintainer: Thomas Evans <thomas@txevans.com>
-pkgname=gromarch-git
+pkgname=parfait-git
 pkgver=0.1.0
 pkgrel=1
 pkgdesc="Open-source Granola-style meeting notetaker for Omarchy (local whisper.cpp transcription, LLM-enhanced notes, live Omarchy theming)"
@@ -27,5 +27,5 @@ build() {
 package() {
   DESTDIR="$pkgdir" cmake --install build
   install -Dm755 "${pkgname%-git}/omarchy/install-hook.sh" \
-    "$pkgdir/usr/share/gromarch/omarchy/install-hook.sh"
+    "$pkgdir/usr/share/parfait/omarchy/install-hook.sh"
 }

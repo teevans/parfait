@@ -20,14 +20,14 @@
 // Everything here runs on the object's own thread (the main thread in practice):
 // QNetworkAccessManager, the QTimers and the cached event list are not guarded.
 
-namespace gromarch {
+namespace parfait {
 namespace {
 
 constexpr int kRefreshMs = 5 * 60 * 1000;
 constexpr int kImminentCheckMs = 30 * 1000;
 constexpr int kWindowDays = 7;
 
-QSettings makeSettings() { return QSettings("gromarch", "gromarch"); }
+QSettings makeSettings() { return QSettings("parfait", "parfait"); }
 
 QString setting(const char* key) {
     QSettings s = makeSettings();
@@ -287,14 +287,14 @@ void CalendarService::refresh() {
         if (u.scheme().compare("webcal", Qt::CaseInsensitive) == 0) u.setScheme("https");
         QNetworkRequest req(u);
         req.setRawHeader("Accept", "text/calendar");
-        req.setHeader(QNetworkRequest::UserAgentHeader, "gromarch/0.1");
+        req.setHeader(QNetworkRequest::UserAgentHeader, "parfait/0.1");
         ++s->pending;
         QNetworkReply* reply = s->nam->get(req);
         connect(reply, &QNetworkReply::finished, this, [this, s, reply, from, to, finish] {
             reply->deleteLater();
             if (reply->error() != QNetworkReply::NoError) {
                 const QString msg = QString("Calendar (ICS) fetch failed: %1").arg(reply->errorString());
-                qWarning("gromarch: %s", qPrintable(msg));
+                qWarning("parfait: %s", qPrintable(msg));
                 emit error(msg);
             } else {
                 s->incoming += parseIcs(QString::fromUtf8(reply->readAll()), from, to);
@@ -319,7 +319,7 @@ void CalendarService::refresh() {
 
         QNetworkRequest req{QUrl(caldavUrl)};
         req.setHeader(QNetworkRequest::ContentTypeHeader, "application/xml; charset=utf-8");
-        req.setHeader(QNetworkRequest::UserAgentHeader, "gromarch/0.1");
+        req.setHeader(QNetworkRequest::UserAgentHeader, "parfait/0.1");
         req.setRawHeader("Depth", "1");
         const QString user = setting("calendar/username");
         const QString pass = setting("calendar/password");
@@ -333,7 +333,7 @@ void CalendarService::refresh() {
             reply->deleteLater();
             if (reply->error() != QNetworkReply::NoError) {
                 const QString msg = QString("Calendar (CalDAV) request failed: %1").arg(reply->errorString());
-                qWarning("gromarch: %s", qPrintable(msg));
+                qWarning("parfait: %s", qPrintable(msg));
                 emit error(msg);
             } else {
                 const QStringList blobs = calendarDataFromMultistatus(reply->readAll());
@@ -344,4 +344,4 @@ void CalendarService::refresh() {
     }
 }
 
-} // namespace gromarch
+} // namespace parfait

@@ -9,7 +9,7 @@
 #include "store/Library.h"
 #include "transcribe/TranscribeEngine.h"
 
-namespace gromarch {
+namespace parfait {
 namespace {
 
 const char* kUntitled = "Untitled meeting";
@@ -53,7 +53,7 @@ MeetingController::MeetingController(AudioEngine* audio, TranscribeEngine* trans
     // --- transcriber -> UI + store -------------------------------------------
     if (transcribe) {
         connect(transcribe, &TranscribeEngine::segmentReady, this,
-                [this](gromarch::TranscriptSegment segment) {
+                [this](parfait::TranscriptSegment segment) {
                     if (segment.meetingId < 0) segment.meetingId = d->currentId;
                     emit liveSegment(segment);
                     if (segment.final && d->library && segment.meetingId >= 0 &&
@@ -227,4 +227,4 @@ void MeetingController::setTitle(qint64 meetingId, const QString& title) {
     d->library->updateMeeting(m);
 }
 
-} // namespace gromarch
+} // namespace parfait

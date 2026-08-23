@@ -6,8 +6,8 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-IMAGE=${GROMARCH_E2E_IMAGE:-gromarch-e2e}
-HOST_OUT=${GROMARCH_E2E_OUT:-$REPO_ROOT/build/e2e-out}
+IMAGE=${PARFAIT_E2E_IMAGE:-parfait-e2e}
+HOST_OUT=${PARFAIT_E2E_OUT:-$REPO_ROOT/build/e2e-out}
 
 mkdir -p "$HOST_OUT"
 

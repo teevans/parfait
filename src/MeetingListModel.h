@@ -6,7 +6,7 @@
 #include <QVariantMap>
 #include "Types.h"
 
-namespace gromarch {
+namespace parfait {
 
 class Library;
 
@@ -53,4 +53,4 @@ private:
     QString m_filter;
 };
 
-} // namespace gromarch
+} // namespace parfait

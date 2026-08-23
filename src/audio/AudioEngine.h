@@ -4,7 +4,7 @@
 #include <memory>
 #include "Types.h"
 
-namespace gromarch {
+namespace parfait {
 
 // Dual-stream PipeWire capture: default mic source + default sink monitor.
 // Emits 16 kHz mono f32 frames per stream for transcription, and (when retention
@@ -40,4 +40,4 @@ private:
     std::unique_ptr<Impl> d;
 };
 
-} // namespace gromarch
+} // namespace parfait

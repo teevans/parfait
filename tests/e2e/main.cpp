@@ -1,8 +1,8 @@
 // Headless end-to-end driver: AudioEngine -> TranscribeEngine, no GUI.
-// Built as `gromarch-e2e`; intended to run inside a container with a headless
+// Built as `parfait-e2e`; intended to run inside a container with a headless
 // PipeWire and virtual devices feeding the default source / sink monitor.
 //
-//   gromarch-e2e --model ggml-base.en.bin --seconds 30 [--audio out.ogg] [--out t.txt]
+//   parfait-e2e --model ggml-base.en.bin --seconds 30 [--audio out.ogg] [--out t.txt]
 //
 // Exit codes: 0 = at least one final segment, 2 = ran but produced none,
 //             1 = error (model load failure, audio error, bad arguments).
@@ -24,7 +24,7 @@
 #include "audio/AudioEngine.h"
 #include "transcribe/TranscribeEngine.h"
 
-using namespace gromarch;
+using namespace parfait;
 
 namespace {
 
@@ -50,7 +50,7 @@ QString formatSegment(const TranscriptSegment& seg) {
 
 int main(int argc, char* argv[]) {
     QCoreApplication app(argc, argv);
-    app.setApplicationName("gromarch-e2e");
+    app.setApplicationName("parfait-e2e");
     app.setApplicationVersion("0.1.0");
 
     QCommandLineParser parser;
@@ -160,7 +160,7 @@ int main(int argc, char* argv[]) {
         fail(QStringLiteral("transcribe: %1").arg(message));
     });
     QObject::connect(&transcribe, &TranscribeEngine::segmentReady, &app,
-                     [&](const gromarch::TranscriptSegment& seg) {
+                     [&](const parfait::TranscriptSegment& seg) {
                          if (seg.final) {
                              finals.append(seg);
                              err << formatSegment(seg) << "\n" << Qt::flush;

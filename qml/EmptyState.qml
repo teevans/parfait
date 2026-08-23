@@ -14,7 +14,7 @@ Item {
 
         Label {
             Layout.alignment: Qt.AlignHCenter
-            text: "gromarch"
+            text: "parfait"
             color: Theme.foreground
             font.family: Theme.monoFont
             font.pixelSize: 22

@@ -13,7 +13,7 @@
 #include <QTimer>
 #include <QUrl>
 
-namespace gromarch {
+namespace parfait {
 
 namespace {
 
@@ -25,14 +25,14 @@ constexpr int kTransferTimeoutMs = 300000;
 enum class Job { None, Enhance, Title };
 
 QString settingsBaseUrl() {
-    QSettings s(QStringLiteral("gromarch"), QStringLiteral("gromarch"));
+    QSettings s(QStringLiteral("parfait"), QStringLiteral("parfait"));
     QString url = s.value(QStringLiteral("llm/baseUrl")).toString().trimmed();
     while (url.endsWith(QLatin1Char('/'))) url.chop(1);
     return url;
 }
 
 QString settingsValue(const char* key) {
-    QSettings s(QStringLiteral("gromarch"), QStringLiteral("gromarch"));
+    QSettings s(QStringLiteral("parfait"), QStringLiteral("parfait"));
     return s.value(QString::fromLatin1(key)).toString().trimmed();
 }
 
@@ -364,4 +364,4 @@ void EnhanceService::suggestTitle(const QString& transcriptText) {
     });
 }
 
-} // namespace gromarch
+} // namespace parfait

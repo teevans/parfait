@@ -3,12 +3,12 @@
 #include <QObject>
 #include <memory>
 
-namespace gromarch {
+namespace parfait {
 
 // Reads the active Omarchy theme (~/.config/omarchy/current/theme/colors.toml,
 // semantic keys with legacy bg/fg fallbacks) and watches for theme switches
 // (symlink + file watcher). Falls back to a built-in dark palette when no
-// Omarchy theme is present, or honors $GROMARCH_THEME pointing at a colors.toml.
+// Omarchy theme is present, or honors $PARFAIT_THEME pointing at a colors.toml.
 // Exposed to QML as the singleton `Theme`.
 class ThemeService : public QObject {
     Q_OBJECT
@@ -46,7 +46,7 @@ public:
     QString uiFont() const;
 
 public slots:
-    void reload();              // also invoked by `gromarch --retint` via local socket
+    void reload();              // also invoked by `parfait --retint` via local socket
 
 signals:
     void themeChanged();
@@ -56,4 +56,4 @@ private:
     std::unique_ptr<Impl> d;
 };
 
-} // namespace gromarch
+} // namespace parfait

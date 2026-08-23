@@ -1,6 +1,6 @@
-# Headless end-to-end rig for gromarch: builds gromarch-e2e, then runs it against a
+# Headless end-to-end rig for parfait: builds parfait-e2e, then runs it against a
 # throwaway PipeWire graph with virtual mic/sink devices. Build context = repo root:
-#   docker build -f docker/Dockerfile -t gromarch-e2e .
+#   docker build -f docker/Dockerfile -t parfait-e2e .
 FROM ubuntu:24.04 AS build
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -23,7 +23,7 @@ RUN cmake -S /src -B /build -G Ninja \
         -DWHISPER_BUILD_TESTS=OFF \
         -DWHISPER_BUILD_EXAMPLES=OFF \
         -DWHISPER_BUILD_SERVER=OFF \
-    && cmake --build /build --target gromarch-e2e
+    && cmake --build /build --target parfait-e2e
 
 
 FROM ubuntu:24.04 AS runtime
@@ -71,10 +71,10 @@ RUN id -u tester >/dev/null 2>&1 || usermod -l tester -d /home/tester -m ubuntu 
 COPY docker/entrypoint.sh docker/test-meeting.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/test-meeting.sh
 
-COPY --from=build /build/gromarch-e2e /usr/local/bin/gromarch-e2e
+COPY --from=build /build/parfait-e2e /usr/local/bin/parfait-e2e
 # whisper/ggml are built as shared libs alongside the binary.
-COPY --from=build /build/bin/ /usr/local/lib/gromarch/
-RUN echo /usr/local/lib/gromarch > /etc/ld.so.conf.d/gromarch.conf && ldconfig
+COPY --from=build /build/bin/ /usr/local/lib/parfait/
+RUN echo /usr/local/lib/parfait > /etc/ld.so.conf.d/parfait.conf && ldconfig
 
 RUN mkdir -p /out /tmp/xdg && chown tester:tester /out /tmp/xdg && chmod 700 /tmp/xdg
 

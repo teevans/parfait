@@ -2,7 +2,7 @@
 #include <QHash>
 #include <QString>
 
-namespace gromarch {
+namespace parfait {
 namespace prompts {
 
 // Max transcript characters sent to the model; longer transcripts keep the tail.
@@ -112,4 +112,4 @@ inline QString titleUserMessage(const QString& transcriptText) {
 }
 
 } // namespace prompts
-} // namespace gromarch
+} // namespace parfait

@@ -11,7 +11,7 @@
 #include <QUrl>
 #include <QVariantMap>
 
-namespace gromarch {
+namespace parfait {
 
 namespace {
 
@@ -23,7 +23,7 @@ const QString kWhisperCpp =
     QStringLiteral("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/");
 
 QString settingsModelPath() {
-    QSettings s(QStringLiteral("gromarch"), QStringLiteral("gromarch"));
+    QSettings s(QStringLiteral("parfait"), QStringLiteral("parfait"));
     return s.value(QStringLiteral("transcribe/modelPath")).toString().trimmed();
 }
 
@@ -52,7 +52,7 @@ ModelDownloader::~ModelDownloader() {
 
 QString ModelDownloader::modelsDir() const {
     const QString base = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation);
-    return QDir(base).filePath(QStringLiteral("gromarch/models"));
+    return QDir(base).filePath(QStringLiteral("parfait/models"));
 }
 
 QString ModelDownloader::pathFor(const QString& name) const {
@@ -151,7 +151,7 @@ void ModelDownloader::download(const QString& name) {
     req.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                      QNetworkRequest::NoLessSafeRedirectPolicy);
     req.setMaximumRedirectsAllowed(10);
-    req.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("gromarch"));
+    req.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("parfait"));
 
     QNetworkReply* reply = m_nam->get(req);
     Job job;
@@ -254,11 +254,11 @@ void ModelDownloader::setActive(const QString& name) {
     const QString path = pathFor(name);
     if (m_activePath == path) return;
     m_activePath = path;
-    QSettings s(QStringLiteral("gromarch"), QStringLiteral("gromarch"));
+    QSettings s(QStringLiteral("parfait"), QStringLiteral("parfait"));
     s.setValue(QStringLiteral("transcribe/modelPath"), path);
     s.sync();
     emit activeModelPathChanged(path);
     emit modelsChanged();
 }
 
-} // namespace gromarch
+} // namespace parfait

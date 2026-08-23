@@ -4,7 +4,7 @@
 #include <QString>
 #include <QStringList>
 
-namespace gromarch {
+namespace parfait {
 
 // Which capture stream a piece of audio/text came from.
 enum class Stream { Mic = 0, System = 1 };
@@ -74,8 +74,8 @@ public:
     Q_PROPERTY(QString meetingUrl MEMBER meetingUrl)
 };
 
-} // namespace gromarch
+} // namespace parfait
 
-Q_DECLARE_METATYPE(gromarch::TranscriptSegment)
-Q_DECLARE_METATYPE(gromarch::Meeting)
-Q_DECLARE_METATYPE(gromarch::CalendarEvent)
+Q_DECLARE_METATYPE(parfait::TranscriptSegment)
+Q_DECLARE_METATYPE(parfait::Meeting)
+Q_DECLARE_METATYPE(parfait::CalendarEvent)

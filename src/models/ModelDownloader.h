@@ -9,14 +9,14 @@ class QFile;
 class QNetworkAccessManager;
 class QNetworkReply;
 
-namespace gromarch {
+namespace parfait {
 
 // In-app whisper.cpp model catalog + downloader.
-// Models live in ~/.local/share/gromarch/models/ (GenericDataLocation, matching
+// Models live in ~/.local/share/parfait/models/ (GenericDataLocation, matching
 // TranscribeEngine's default model path). Downloads follow redirects (the
 // HuggingFace resolve/ URLs redirect to a CDN), land in a <name>.part file and
 // are renamed into place only on success, so a partial file never looks usable.
-// The active model is persisted to QSettings("gromarch","gromarch") under
+// The active model is persisted to QSettings("parfait","parfait") under
 // transcribe/modelPath; main.cpp wires activeModelPathChanged into
 // TranscribeEngine::setModelPath so switching applies live.
 // Exposed to QML as the context property `Models`.
@@ -35,7 +35,7 @@ public:
     QVariantList models() const;
     bool isBusy() const;                       // at least one download in flight
     QString activeModelPath() const;           // absolute path, empty if unset
-    QString modelsDir() const;                 // ~/.local/share/gromarch/models
+    QString modelsDir() const;                 // ~/.local/share/parfait/models
 
     Q_INVOKABLE void download(const QString& name);
     Q_INVOKABLE void cancel(const QString& name);
@@ -79,4 +79,4 @@ private:
     bool m_busy = false;
 };
 
-} // namespace gromarch
+} // namespace parfait

@@ -1,4 +1,4 @@
-# Gromarch — an open-source Granola for Omarchy
+# Parfait — an open-source Granola for Omarchy
 
 A local-first meeting notepad for Linux/Hyprland: capture any meeting's audio, transcribe it
 on-device, type rough cues during the call, and let an LLM merge your cues with the transcript
@@ -50,7 +50,7 @@ No daemon in v1 — the app must be running to record (a background/tray mode ca
 - **Speaker attribution for free:** text from the mic stream = "Me", from the system stream
   = "Them". No diarization model needed in v1. (Per-participant diarization is a v2 idea.)
 - Default model `ggml-small.en` (or `base` for low-end); GGUF models downloaded on first run
-  into `~/.local/share/gromarch/models/` with an in-app picker. GPU via Vulkan when available.
+  into `~/.local/share/parfait/models/` with an in-app picker. GPU via Vulkan when available.
 - Emits `TranscriptSegment { stream, t0, t1, text, final }` — partials update the live view,
   finals are persisted.
 
@@ -75,7 +75,7 @@ No daemon in v1 — the app must be running to record (a background/tray mode ca
   link. Optional auto-record toggle.
 
 ### Storage
-- `~/.local/share/gromarch/gromarch.db` (SQLite, WAL):
+- `~/.local/share/parfait/parfait.db` (SQLite, WAL):
   - `meetings(id, title, started_at, ended_at, calendar_uid, attendees_json, audio_path,
     notes_md, enhanced_md, template_id, state)`
   - `segments(meeting_id, stream, t0, t1, text)` + **FTS5** index over segments and notes
@@ -88,7 +88,7 @@ No daemon in v1 — the app must be running to record (a background/tray mode ca
 
 ## 2. Omarchy theming
 
-Goal: Gromarch looks like it shipped with the OS and retints live on `omarchy-theme-set`.
+Goal: Parfait looks like it shipped with the OS and retints live on `omarchy-theme-set`.
 
 - **ThemeService (C++)** reads `~/.config/omarchy/current/theme/colors.toml` (semantic keys:
   `background`, `dark_background`, `darker_background`, `lighter_background`, `foreground`
@@ -97,11 +97,11 @@ Goal: Gromarch looks like it shipped with the OS and retints live on `omarchy-th
   `Behavior on color` transitions — theme switches animate instead of flashing.
 - **Live retint, two mechanisms (both):**
   1. `QFileSystemWatcher` on the `current/theme` symlink + colors.toml — works with zero setup.
-  2. Ship `omarchy/gromarch.tpl` + an install script that registers a retint command
-     (`gromarch --retint`, delivered over the app's local socket) in the theme-set hook /
+  2. Ship `omarchy/parfait.tpl` + an install script that registers a retint command
+     (`parfait --retint`, delivered over the app's local socket) in the theme-set hook /
      `post_theme_commands` — the "proper" Omarchy citizen path.
 - Fallback palette (for non-Omarchy Linux): built-in Tokyo Night-ish default, or point
-  `GROMARCH_THEME` at any colors.toml.
+  `PARFAIT_THEME` at any colors.toml.
 - Typography/spacing follow Omarchy conventions: mono accents (CaskaydiaMono) for
   timestamps/metadata, the UI font for prose, flat surfaces, 1px `lighter_background`
   borders, `accent` used sparingly (record indicator, links, active states).
@@ -127,14 +127,14 @@ search (`/`), calendar rail showing today's upcoming events each with a `Record`
 retention policy (keep audio forever / 30 days / delete after transcription).
 
 Keyboard: `Super`-friendly, vim-ish where sane (`Ctrl+R` record, `Ctrl+E` enhance,
-`/` search, `j/k` list nav). Also a CLI: `gromarch record --title "Standup"` for
+`/` search, `j/k` list nav). Also a CLI: `parfait record --title "Standup"` for
 scripting/Waybar integration, and a tiny Waybar module showing a red dot while recording.
 
 ---
 
 ## 4. Packaging
 
-- `PKGBUILD` → AUR (`gromarch`, `gromarch-git`). Deps: qt6-base, qt6-declarative,
+- `PKGBUILD` → AUR (`parfait`, `parfait-git`). Deps: qt6-base, qt6-declarative,
   pipewire, libsecret; whisper.cpp vendored as a submodule (built with Vulkan when present).
 - License: MIT. Repo layout: `src/{audio,transcribe,llm,calendar,store,ui}/`, `qml/`,
   `omarchy/` (tpl + hook installer), `packaging/`.
