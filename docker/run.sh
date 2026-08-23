@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Host-side driver: build the e2e image and run a meeting simulation in it.
-#   ./docker/run.sh [--youtube URL] [--increments N]
+#   ./docker/run.sh [--youtube URL] [--increments N] [--multi]
+# --multi runs the three-voice panel against the tinydiarize model and asserts
+# speaker-turn indices show up on Them.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

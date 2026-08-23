@@ -42,11 +42,28 @@ RUN curl -fsSL -o /usr/local/bin/yt-dlp \
       https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux \
     && chmod +x /usr/local/bin/yt-dlp
 
-# Model lives in its own layer, downloaded before anything that changes per-build.
+# Models live in their own layers, downloaded before anything that changes per-build.
 RUN mkdir -p /opt/models && \
     curl -fSL --retry 3 -o /opt/models/ggml-base.en.bin \
       https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin && \
     test -s /opt/models/ggml-base.en.bin
+
+# tinydiarize model (~488 MB): filename contains "tdrz", which is what switches
+# speaker-turn detection on in TranscribeEngine. Separate layer so it is cached.
+RUN curl -fSL --retry 3 -o /opt/models/ggml-small.en-tdrz.bin \
+      https://huggingface.co/akashmjn/tinydiarize-whisper.cpp/resolve/main/ggml-small.en-tdrz.bin && \
+    test -s /opt/models/ggml-small.en-tdrz.bin
+
+# Multi-speaker "Them" panel for --multi. tinydiarize is trained on real
+# conversational speech and does not fire on espeak/mbrola synthesis at all
+# (verified: zero [SPEAKER_TURN] tokens for any voice/pitch/channel combination),
+# so the turn-detection test needs genuine human audio. This is the same
+# public-domain Apollo 13 loop whisper.cpp itself uses to demo tdrz: ~2:41 of
+# three-way radio traffic (Swigert / Lovell / Houston). Own layer, own cache.
+RUN mkdir -p /opt/samples && \
+    curl -fSL --retry 3 -o /opt/samples/panel.mp3 \
+      https://upload.wikimedia.org/wikipedia/commons/transcoded/6/6f/Apollo13-wehaveaproblem.ogg/Apollo13-wehaveaproblem.ogg.mp3 && \
+    test -s /opt/samples/panel.mp3
 
 # ubuntu:24.04 ships an "ubuntu" user at uid 1000; reuse it rather than fighting for the id.
 RUN id -u tester >/dev/null 2>&1 || usermod -l tester -d /home/tester -m ubuntu && groupmod -n tester ubuntu
