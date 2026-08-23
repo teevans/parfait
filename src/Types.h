@@ -18,7 +18,13 @@ public:
     double t1 = 0.0;
     QString text;
     bool final = false;      // partials update in place until final
+    // Speaker turn index within the System stream (tinydiarize): 0,1,2,... as
+    // turns change; -1 = unknown/not diarized. Mic stream is always -1 ("Me").
+    // Turn indices are NOT stable identities — index 2 may be the same person
+    // as index 0; they only mark that the voice changed.
+    int speaker = -1;
     Q_PROPERTY(int stream MEMBER stream)
+    Q_PROPERTY(int speaker MEMBER speaker)
     Q_PROPERTY(double t0 MEMBER t0)
     Q_PROPERTY(double t1 MEMBER t1)
     Q_PROPERTY(QString text MEMBER text)
