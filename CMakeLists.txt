@@ -24,6 +24,12 @@ file(GLOB_RECURSE GROMARCH_QML CONFIGURE_DEPENDS qml/*.qml)
 
 qt_add_executable(gromarch ${GROMARCH_SOURCES})
 
+# Strip the qml/ prefix so files land at qrc:/Gromarch/<File>.qml, matching the URI.
+foreach(qml_file IN LISTS GROMARCH_QML)
+    file(RELATIVE_PATH qml_rel ${CMAKE_CURRENT_SOURCE_DIR}/qml ${qml_file})
+    set_source_files_properties(${qml_file} PROPERTIES QT_RESOURCE_ALIAS ${qml_rel})
+endforeach()
+
 qt_add_qml_module(gromarch
     URI Gromarch
     VERSION 1.0

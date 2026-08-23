@@ -1,0 +1,31 @@
+# Maintainer: Thomas Evans <thomas@txevans.com>
+pkgname=gromarch-git
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Open-source Granola-style meeting notetaker for Omarchy (local whisper.cpp transcription, LLM-enhanced notes, live Omarchy theming)"
+arch=(x86_64)
+url="https://github.com/txevans/gromarch"
+license=(MIT)
+depends=(qt6-base qt6-declarative pipewire libopusenc sqlite)
+makedepends=(cmake ninja git)
+optdepends=('vulkan-icd-loader: GPU-accelerated transcription'
+            'ttf-cascadia-mono-nerd: Omarchy default mono font')
+source=("git+$url.git")
+sha256sums=('SKIP')
+
+prepare() {
+  cd "${pkgname%-git}"
+  git submodule update --init third_party/whisper.cpp
+}
+
+build() {
+  cmake -S "${pkgname%-git}" -B build -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+  cmake --build build
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+  install -Dm755 "${pkgname%-git}/omarchy/install-hook.sh" \
+    "$pkgdir/usr/share/gromarch/omarchy/install-hook.sh"
+}
