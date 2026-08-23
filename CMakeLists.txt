@@ -48,3 +48,20 @@ if(GROMARCH_WITH_WHISPER)
 endif()
 
 install(TARGETS gromarch RUNTIME DESTINATION bin)
+
+# Headless end-to-end harness: real AudioEngine -> TranscribeEngine, no GUI.
+# Sources are listed explicitly; the GLOB above only covers src/, not tests/.
+add_executable(gromarch-e2e
+    tests/e2e/main.cpp
+    src/Types.h                 # Q_GADGET: AUTOMOC needs the header in the sources
+    src/audio/AudioEngine.cpp
+    src/transcribe/TranscribeEngine.cpp)
+
+target_include_directories(gromarch-e2e PRIVATE src)
+target_link_libraries(gromarch-e2e PRIVATE
+    Qt6::Core PkgConfig::PIPEWIRE PkgConfig::OPUSENC)
+
+if(GROMARCH_WITH_WHISPER)
+    target_compile_definitions(gromarch-e2e PRIVATE GROMARCH_WITH_WHISPER)
+    target_link_libraries(gromarch-e2e PRIVATE whisper)
+endif()
